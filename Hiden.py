@@ -12,9 +12,10 @@ class HidenHPR20Interface:
     def __init__(self, file_name = None, view = None):
         self.file_name = file_name
         self.view = view
-        self.file_path = r'C:\Users\jmoncadav\OneDrive - Brookhaven National Laboratory\Documents\Hiden Analytical\MASsoft\11'
-        self.full_path = os.path.join(self.file_path, self.file_name)
-        self.host = 'localhost'
+        # self.file_path = r'C:\Users\jmoncadav\OneDrive - Brookhaven National Laboratory\Documents\Hiden Analytical\MASsoft\11'
+        # self.full_path = os.path.join(self.file_path, self.file_name)
+        self.full_path = "HIDEN_LastFile"
+        self.host = '10.66.58.162'
         self.port = 5026
         self.out_terminator = "\r\n"
         self.in_terminator = "\r\n"
@@ -37,97 +38,39 @@ class HidenHPR20Interface:
             print(f"Failed to connect: {e}")
             self.sock = None
 
-    # def data_collecting_loop(self, view_num):
-    #     all_data = ""
-    #     try:
-    #         while True:
-    #             raw_data = self.send_command(f"-lData -v{view_num}")
-    #             if raw_data != '0':
-    #                 print(f"Collecting .... {raw_data}")
-    #                 all_data += raw_data + "\r\n "
-    #             time.sleep(5)
-                
-    #     except KeyboardInterrupt:
-    #         print("Done.")
-    #         print(self.parse_data(view_num, all_data))
 
-    # def data_collecting_loop(self, view_num):
-    #     self.open_socket()
-    #     self.open_file()
-    #     parsed_data = []
-    #     try:
-    #         while True:
-    #             raw_data = self.send_command(f"-lData -v{view_num}")
-    #             if raw_data != '0':
-    #                 print(f"Collecting .... {raw_data}")
-    #                 lines = raw_data.strip().split('\n')
-    #                 for line in lines:
-    #                     # Ignore the first line if it only contains '0'
-    #                     if line.strip() == '0':
-    #                         print("Ignoring first line with '0'.")
-    #                         continue
-    #                     # print(f"Parsing line: {line.strip()}")
-    #                     values = line.split()
-    #                     if len(values) < 10:
-    #                         print(f"Line skipped due to insufficient values: {line.strip()}")
-    #                         continue  # Skip this line if it doesn't have enough values
-    #                     parsed_data.append(values)
-
-    #                 if parsed_data:
-    #                     df = pd.DataFrame(parsed_data)
-    #                     print(df)
-    #                 else:
-    #                     print("No data parsed.")
-    #                     return pd.DataFrame()  # Return an empty DataFrame if no data
-    #             time.sleep(5)
-                
-    #     except KeyboardInterrupt:
-    #         print(parsed_data)
-    #         # print(self.parse_data(view_num, all_data))
-
-    def data_collecting_loop(self, view_num, hdf5_file='data3.h5', dataset_name='mass_spectrometer_data'):
+    def data_collecting_loop(self, view_num):
         headers = self.data_headers2(view_num)
         self.open_socket()
         self.open_file()
         parsed_data = []
 
         # Open HDF5 file in append mode
-        with pd.HDFStore(hdf5_file, mode='a') as store:
+        while True:
             try:
-                while True:
-                    raw_data = self.send_command(f"-lData -v{view_num}")
-                    if raw_data != '0':
-                        print(raw_data)
-                        lines = raw_data.strip().split('\r\n')
-                        for line in lines:
-                            if line.strip() == '0':
-                                print("Ignoring first line with '0'.")
-                                continue
-                            values = line.split()
-                            if len(values) < 10:
-                                print(f"Line skipped due to insufficient values: {line.strip()}")
-                                continue
-
-                            parsed_data.append(values)
-
-                        if parsed_data:
-                            # Convert parsed data to DataFrame
-                            df = pd.DataFrame(parsed_data, columns=headers)
-
-                            # Append to HDF5 file
-                            df.to_hdf(store, key=dataset_name, format='table', append=True, index=False)
-                            print(df)
-                            
-                            # Reset parsed_data to avoid appending duplicate data
-                            parsed_data = []
-
-                    time.sleep(5)
-                    
+                raw_data = self.send_command(f"-lData -v{view_num}")
+                if raw_data != '0':
+                    print(raw_data)
+                    lines = raw_data.strip().split('\r\n')
+                    for line in lines:
+                        if line.strip() == '0':
+                            print("Ignoring first line with '0'.")
+                            continue
+                        values = line.split()
+                        if len(values) < len(headers):
+                            print(f"Line skipped due to insufficient values: {line.strip()}")
+                            continue
+                        parsed_data.append(values)
+                    if parsed_data:
+                        # Convert parsed data to DataFrame
+                        df = pd.DataFrame(parsed_data, columns=headers)
+                    time.sleep(5)                    
             except KeyboardInterrupt:
                 print("Data collection stopped.")
                 print(parsed_data)
             except Exception as e:
                 print(f"An error occurred: {e}")
+        
     def data_headers(self, view_num):
         try:
             while True:
