@@ -174,11 +174,8 @@ class HidenHPR20Interface:
         while True:
             raw_data = self.send_command(f"-lData -v{view_num}")
             if raw_data != '0':
-
-
                 lines = raw_data.strip().split('\r\n')
                 print(f'Lines: {lines}')
-
                 for line in lines:
                     if line.strip() == '0':
                         print("Ignoring first line with '0'.")
@@ -193,17 +190,52 @@ class HidenHPR20Interface:
                 if parsed_data:
                     # Convert parsed data to DataFrame
                     df = pd.DataFrame(parsed_data, columns=headers)
-                    print(df)                
-            time.sleep(5)
+                    print(df)
+            time.sleep(1)
 
+    def data_collecting_loop2(self, view_num):
+        headers = self.data_headers(view_num)
+        print(f'Collecting {headers}')
+        self.open_socket()
+        self.open_file()
 
-    
+        # data_dict = {header: [] for header in headers}
 
-    
+        try:
+            while True:
+                raw_data = self.send_command(f"-lData -v{view_num}")
+                if raw_data and raw_data != '0':
+                    lines = raw_data.strip().split('\r\n')
 
-    
+                    for line in lines:
+                        if line.strip() == '0':
+                            # skip the initial "0"
+                            continue
 
+                        values = line.split()
+                        if len(values) != len(headers):
+                            print(f"Skipping line (wrong length): {line!r}")
+                            continue
 
+                        # CORRECTED LOOP:
+                        for header, val in zip(headers, values):
+                            data_dict[header].append(val)
+                            # verbose debug:
+                            print(f" Appended {val!r} to '{header}'")
+
+                    # show your current dict
+                    print("Current data_dict:")
+                    for hdr, col in data_dict.items():
+                        print(f"  {hdr}: {col}")
+
+                time.sleep(1)
+
+        except KeyboardInterrupt:
+            print("Stopping data collection.")
+        finally:
+            self.close_socket()
+
+        return data_dict
 
     # #WIP
     # # Monitor the status of the MSIU
