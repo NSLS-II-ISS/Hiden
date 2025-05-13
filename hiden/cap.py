@@ -203,12 +203,27 @@ logging.basicConfig(level=logging.INFO)
 class RGAIOC(PVGroup):
 
     # Control PV to start/stop the acquisition loop
-    start = pvproperty(
-        name='XF:08IDB-SE{{RGA:1}}P:START',
+    initialize = pvproperty(
+        name='XF:08IDB-SE{{RGA:1}}:OpenExp',
         value=0,
-        doc='Write 1 to start acquisition loop, 0 to stop',
+        doc='Configure the experiment',
         dtype=int,
     )
+
+    experiment = pvproperty(
+        name='XF:08IDB-SE{{RGA:1}}:ExpName',
+        value='file1.exp',
+        dtype=str,
+        max_length=40
+    )
+
+    acquire = pvproperty(
+        name='XF:08IDB-SE{{RGA:1}}:Acquire',
+        value=0,
+        doc='Start/stop the acquisition loop',
+        dtype=int,
+    )
+
     # Define the ten MID‑I readback PVs
     for idx in range(1, 11):
         locals()[f'mid{idx}'] = pvproperty(
@@ -236,16 +251,16 @@ class RGAIOC(PVGroup):
         self._running = False
         self._task = None
 
-    @start.putter
-    async def start(self, instance, value):
+    @acquire.putter
+    async def acquire(self, instance, value):
         """Triggered when someone writes to the START PV."""
-        want_run = bool(int(value))
-        if want_run and not self._running:
+        want_acquire = bool(int(value))
+        if want_acquire and not self._running:
             logging.info("Starting acquisition loop")
             self._running = True
             # spawn background task
             self._task = asyncio.create_task(self._acquire_loop())
-        elif not want_run and self._running:
+        elif not want_acquire and self._running:
             logging.info("Stopping acquisition loop")
             self._running = False
             if self._task:

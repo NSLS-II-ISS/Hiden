@@ -199,7 +199,7 @@ class HidenHPR20Interface:
         self.open_socket()
         self.open_file()
 
-        # data_dict = {header: [] for header in headers}
+        data_dict = {header: [] for header in headers}
 
         try:
             while True:
