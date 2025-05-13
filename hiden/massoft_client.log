@@ -6930,3 +6930,17 @@ ScanningActive
 2025-05-12 15:19:39,520 [INFO] CommandSocket | -xAbort -d20 => 0
 2025-05-12 15:19:53,425 [INFO] CommandSocket | -xAbort -d20 => 0
 2025-05-12 15:19:58,231 [INFO] CommandSocket | -xAbort -d20 => 0
+2025-05-13 11:48:52,942 [INFO] CommandSocket connected to 10.66.58.225:5026
+2025-05-13 11:48:52,943 [INFO] StatusSocket connected to 10.66.58.225:5026
+2025-05-13 11:48:52,944 [INFO] DataSocket connected to 10.66.58.225:5026
+2025-05-13 11:48:52,954 [INFO] Asyncio server starting up...
+2025-05-13 11:48:52,954 [INFO] Listening on 0.0.0.0:5064
+2025-05-13 11:48:52,956 [INFO] Server startup complete.
+2025-05-13 11:54:33,151 [INFO] Server task cancelled. Will shut down.
+2025-05-13 11:54:33,152 [INFO] Server exiting....
+2025-05-13 11:54:33,154 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-3' coro=<IocpProactor.accept.<locals>.accept_coro() done, defined at C:\Users\08id-user\AppData\Local\Programs\Python\Python313\Lib\asyncio\windows_events.py:564> exception=OSError(22, 'The I/O operation has been aborted because of either a thread exit or an application request', None, 995, None)>
+Traceback (most recent call last):
+  File "C:\Users\08id-user\AppData\Local\Programs\Python\Python313\Lib\asyncio\windows_events.py", line 567, in accept_coro
+    await future
+OSError: [WinError 995] The I/O operation has been aborted because of either a thread exit or an application request

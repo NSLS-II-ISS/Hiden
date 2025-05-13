@@ -1,3 +1,4 @@
+from pathlib import PureWindowsPath
 import socket
 import time
 import logging
@@ -93,7 +94,7 @@ class MASsoftClient:
         if file_name == None:
             full_path = self.query_filename()
         else:
-            full_path = os.path.join(EXPERIMENT_DIRECTORY, file_name)
+            full_path = str(PureWindowsPath(EXPERIMENT_DIRECTORY) / file_name)
             if not os.path.isfile(full_path):
                 raise FileNotFoundError(f"File not found: {full_path}")
         resp = self.command_socket.send_command(f'-f"{full_path}"')
