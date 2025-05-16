@@ -159,10 +159,17 @@ class RGAIOC(PVGroup):
         if want:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self.client.run_experiment)
+
         return value
 
     @abort_exp.putter
     async def abort_exp(self, instance, value):
+        """Write 1 to abort the running experiment, always resets to 0."""
+        self.client.shutdown()
+        self.client.initialize()
+        self.client.command_socket.send_command('-f"%HIDEN_LastFile%"')
+        path = self.client.command_socket.send_command('-xFilename')
+        print(f'Aborting experiment: {path}')
         want = bool(int(value))
         if want:
             loop = asyncio.get_running_loop()
@@ -171,6 +178,7 @@ class RGAIOC(PVGroup):
 
     @close_exp.putter
     async def close_exp(self, instance, value):
+        self.client.command_socket.send_command('-f"%HIDEN_LastFile%"')
         want = bool(int(value))
         if want:
             loop = asyncio.get_running_loop()
