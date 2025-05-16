@@ -113,9 +113,9 @@ class RGAIOC(PVGroup):
                 for h in headers
                 if 'mass' in h
             ]
-            print('Mass values: {}'.format(mass_values))
+            # print('Mass values: {}'.format(mass_values))
             for idx, mass_val in enumerate(mass_values[:10], start=1):
-                print(f'Mass {idx}: {mass_val}')
+                # print(f'Mass {idx}: {mass_val}')
                 pv = getattr(self, f'mass{idx}')
                 await pv.write(mass_val)
                 logging.debug(f"Wrote {mass_val:.2f} to {pv.name}")
@@ -123,7 +123,7 @@ class RGAIOC(PVGroup):
             self.client.open_experiment_data(path)
             while self._running:
                 print(self._running)
-                print('Trying......')
+                # print('Trying......')
                 try:
                     raw_data = self.client.data_socket.send_command(f"-lData -v1")
                     if raw_data != '0':
@@ -134,19 +134,21 @@ class RGAIOC(PVGroup):
                                 # print("Ignoring first line with '0'.")
                                 continue
                             values = line.split()[2:]
-                            print(f'Values: {values}')
-                            print(f'Length of values: {len(values)}')
-                            print('Length of mass values: {}'.format(len(mass_values)))
+                            # print(f'Values: {values}')
+                            # print(f'Length of values: {len(values)}')
+                            # print('Length of mass values: {}'.format(len(mass_values)))
                             if len(values) == len(mass_values):
-                                print('updating PVs')
+                                # print('updating PVs')
                                 for idx, val in enumerate(values):
-                                    print(f'Index {idx}: {val}')
+                                    # print(f'Index {idx}: {val}')
                                     pv = getattr(self, f'mid{idx+1}')
                                     print(pv)
                                     await pv.write(float(val))
                                     logging.debug(f'Wrote {val} to {pv.name}')
                 except Exception as e:
                     print(f"Caught an exception: {e}")
+                    if str(e).startswith('[Errno 32]'):
+                        self._running = 0
 
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
@@ -169,7 +171,7 @@ class RGAIOC(PVGroup):
         self.client.initialize()
         self.client.command_socket.send_command('-f"%HIDEN_LastFile%"')
         path = self.client.command_socket.send_command('-xFilename')
-        print(f'Aborting experiment: {path}')
+        # print(f'Aborting experiment: {path}')
         want = bool(int(value))
         if want:
             loop = asyncio.get_running_loop()
