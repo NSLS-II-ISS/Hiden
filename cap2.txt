@@ -61,13 +61,7 @@ class RGAIOC(PVGroup):
         super().__init__(*args, **kwargs)
         # Instantiate and connect MASsoft client
         self.client = MASsoftClient()
-        try:
-            # initialize may block / raise; do best-effort here
-            self.client.initialize()
-            self._client_ready = True
-        except Exception as ex:
-            logging.warning(f"MASsoft client initialize failed: {ex}")
-            self._client_ready = False
+        self.client.initialize()
         self._running = False
         self._acq_task = None
 
@@ -78,12 +72,7 @@ class RGAIOC(PVGroup):
             fname = self.experiment.value
             logging.info(f"Opening experiment: {fname}")
             loop = asyncio.get_running_loop()
-            try:
-                await loop.run_in_executor(None, self.client.open_experiment, fname)
-                self._client_ready = True
-            except Exception as ex:
-                logging.error(f"Failed to open experiment {fname}: {ex}")
-                self._client_ready = False
+            await loop.run_in_executor(None, self.client.open_experiment, fname)
         return value
 
     @acquire.putter
@@ -108,68 +97,24 @@ class RGAIOC(PVGroup):
         try:
             loop = asyncio.get_running_loop()
 
-            # 1) Get and parse legends → mass PVs (with retries)
-            headers = None
-            for attempt in range(3):
-                try:
-                    headers = await loop.run_in_executor(None, self.client.get_legends)
-                    break
-                except Exception as ex:
-                    logging.error(f"Error fetching legends (attempt {attempt+1}): {ex}")
-                    # try to reinitialize client once
-                    try:
-                        await loop.run_in_executor(None, self.client.initialize)
-                        self._client_ready = True
-                    except Exception as ex2:
-                        logging.warning(f"Re-init failed: {ex2}")
-                    await asyncio.sleep(1.0)
-
-            if not headers:
-                logging.error("Could not retrieve legends; aborting acquisition loop")
-                self._running = False
-                return
-
-            try:
-                mass_vals = [float(h.split()[-1]) for h in headers if 'mass' in h.lower()][:10]
-            except Exception as ex:
-                logging.error(f"Failed to parse legends: {ex}")
-                mass_vals = []
-
+            # 1) Get and parse legends → mass PVs
+            headers = await loop.run_in_executor(None, self.client.get_legends)
+            mass_vals = [
+                float(h.split()[-1]) for h in headers if 'mass' in h.lower()
+            ][:10]
             logging.info(f"Parsed masses: {mass_vals}")
             for idx, m in enumerate(mass_vals, start=1):
-                try:
-                    await getattr(self, f'mass{idx}').write(m)
-                except Exception as ex:
-                    logging.warning(f"Failed writing mass{idx}: {ex}")
+                await getattr(self, f'mass{idx}').write(m)
 
             # 2) Main data loop
             while self._running:
-                try:
-                    data = await loop.run_in_executor(None, self.client.get_data, 1, 1, False, False)
-                except Exception as ex:
-                    logging.error(f"Error in get_data: {ex}")
-                    # attempt to recover by reinitializing client
-                    try:
-                        await loop.run_in_executor(None, self.client.shutdown)
-                    except Exception:
-                        pass
-                    try:
-                        await loop.run_in_executor(None, self.client.initialize)
-                        self._client_ready = True
-                    except Exception as ex2:
-                        logging.error(f"Reinitialize after data error failed: {ex2}")
-                    await asyncio.sleep(1.0)
-                    continue
-
+                # pull one cycle of data
+                data = await loop.run_in_executor(None, self.client.get_data, 1, 1, False, False)
                 if data:
                     row = data[-1]  # use last cycle
-                    if mass_vals and len(row) >= len(mass_vals):
+                    if len(row) >= len(mass_vals):
                         for idx, val in enumerate(row, start=1):
-                            try:
-                                await getattr(self, f'mid{idx}').write(val)
-                            except Exception as ex:
-                                logging.warning(f"Failed writing mid{idx}: {ex}")
-
+                            await getattr(self, f'mid{idx}').write(val)
                 await asyncio.sleep(1.0)
 
         except asyncio.CancelledError:
