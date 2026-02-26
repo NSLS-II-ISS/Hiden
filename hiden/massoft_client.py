@@ -17,6 +17,7 @@ if not logging.getLogger().handlers:
 MAS_HOST = '10.66.58.225'
 MAS_PORT = 5026
 EXPERIMENT_DIRECTORY = r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
+<<<<<<< HEAD
 EXPERIMENT_DIRECTORY_ENV = "HIDEN_FilePath"
 TEMPLATE_DICT = {
     "exp1": "HIDEN_1.exp", "exp2": "HIDEN_2.exp", "exp3": "HIDEN_3.exp", "exp4": "HIDEN_4.exp",
@@ -26,6 +27,15 @@ MOST_RECENT_FILE = "HIDEN_LastFile"
 
 class MASsoftSocket:
     def __init__(self, host, port, name="GenericSocket", timeout=5, max_retries=2, retry_delay=0.5):
+=======
+EXPERIMENT_DIRECTORY_ENV = "%HIDEN_FilePath%" # Environment variable name for the experiment directory
+MOST_RECENT_FILE = "%HIDEN_LastFile%" # This environment variable name already includes the path
+TIME_PERSISTANCE = 20 # Time in seconds for the messages to keep trying waiting for success
+MESSAGE_TERMINATOR = "\r\n"
+
+class MASsoftSocket:
+    def __init__(self, host, port, name="GenericSocket", timeout=20):
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
         self.host = host
         self.port = port
         self.name = name
@@ -67,8 +77,25 @@ class MASsoftSocket:
             raise ConnectionError(f"{self.name} failed to connect: {last_exc}")
 
     def send_command(self, command, expect_response=True):
+<<<<<<< HEAD
         """Send a command, reconnecting on transient errors. Returns response string or ''."""
         message = command.strip() + ' -d20\r\n'
+=======
+        if not self.sock:
+            raise RuntimeError(f"{self.name} not connected.")
+        # Append retry delay and CRLF
+        message = command.strip() + f' -d{TIME_PERSISTANCE}{MESSAGE_TERMINATOR}'
+        self.sock.sendall(message.encode('utf-8'))
+        if expect_response:
+            try:
+                resp = self.sock.recv(4096).decode('utf-8').strip()
+            except socket.timeout:
+                logging.warning(f"{self.name} response timeout for: {message.strip()}")
+                return ''
+            logging.info(f"{self.name} | {message.strip()} => {resp}")
+            return resp
+        return ''
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
 
         with self.lock:
             for attempt in range(1, self.max_retries + 2):
@@ -142,6 +169,7 @@ class MASsoftClient:
         self.status_socket.connect()
         self.data_socket.connect()
 
+<<<<<<< HEAD
     def open_experiment(self, file_name=None):
         """Open and associate an experiment file.
 
@@ -155,13 +183,80 @@ class MASsoftClient:
             if not os.path.isfile(full_path):
                 raise FileNotFoundError(f"File not found: {full_path}")
 
+=======
+    def open_experiment_commands(self, file_name=None):
+        """Open and associate an experiment file.
+        If file_name is None, query MASsoft for the current filename."""
+        # 1) Determine the filename string
+        if file_name is None:
+            full_path = self.query_filename()
+        else:
+            # Coerce list or tuple into a single string
+            if isinstance(file_name, (list, tuple)):
+                file_name = file_name[0]
+            # Build a pure-Windows path
+            full_path = str(PureWindowsPath(EXPERIMENT_DIRECTORY) / file_name)
+
+        # 2) Send to MASsoft
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
         resp = self.command_socket.send_command(f'-f"{full_path}"')
-        if resp == '0':
-            raise RuntimeError(f"Failed to open: {full_path}")
+        if resp =='0':
+            raise RuntimeError(f"Failed to open experiment file: {full_path}")
+
+        # 3) Remember it for future operations
         self.current_file = full_path
         return full_path
 
+<<<<<<< HEAD
     def run_experiment(self, mode='-Odt'):
+=======
+    def open_experiment_data(self, file_name=None):
+        """Open and associate an experiment file.
+        If file_name is None, query MASsoft for the current filename."""
+        # 1) Determine the filename string
+        if file_name is None:
+            full_path = self.query_filename_data()
+        else:
+            # Coerce list or tuple into a single string
+            if isinstance(file_name, (list, tuple)):
+                file_name = file_name[0]
+            # Build a pure-Windows path
+            full_path = str(PureWindowsPath(EXPERIMENT_DIRECTORY) / file_name)
+
+        # 2) Send to MASsoft
+        resp = self.data_socket.send_command(f'-f"{full_path}"')
+        if resp =='0':
+            raise RuntimeError(f"Failed to open experiment file: {full_path}")
+
+        # 3) Remember it for future operations
+        self.current_file = full_path
+        return full_path
+
+    def open_experiment_status(self, file_name=None):
+        """Open and associate an experiment file.
+        If file_name is None, query MASsoft for the current filename."""
+        # 1) Determine the filename string
+        if file_name is None:
+            full_path = self.query_filename()
+        else:
+            # Coerce list or tuple into a single string
+            if isinstance(file_name, (list, tuple)):
+                file_name = file_name[0]
+            # Build a pure-Windows path
+            full_path = str(PureWindowsPath(EXPERIMENT_DIRECTORY) / file_name)
+
+        # 2) Send to MASsoft
+        resp = self.status_socket_socket.send_command(f'-f"{full_path}"')
+        if resp =='0':
+            raise RuntimeError(f"Failed to open experiment file: {full_path}")
+
+        # 3) Remember it for future operations
+        self.current_file = full_path
+        return full_path
+
+    def run_experiment(self, new_file_name = None, mode = "-Odt"):
+        """Start the experiment."""        
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
         resp = self.command_socket.send_command(f'-xGo {mode}')
         if resp == '0':
             raise RuntimeError("Experiment failed to start.")
@@ -171,12 +266,13 @@ class MASsoftClient:
     def associate_status_link(self, view=1):
         if not self.current_file:
             raise RuntimeError("No file opened.")
-        self.status_socket.send_command(f'-f"{self.current_file}"')
+        self.open_experiment_status()
         self.status_socket.send_command(f'-lStatus -v{view}')
 
     def monitor_until_stopped(self, timeout=120):
         if not self.current_file:
             raise RuntimeError("No file opened.")
+        self.associate_status_link()
         start = time.time()
         while time.time() - start < timeout:
             status = self.status_socket.receive()
@@ -236,6 +332,7 @@ class MASsoftClient:
 
     def get_legends(self, view=1):
         path = self.command_socket.send_command("-xFilename")
+<<<<<<< HEAD
         if not path:
             raise RuntimeError("Failed to get filename for legends")
         self.command_socket.send_command(f'-f"{path}"')
@@ -248,14 +345,56 @@ class MASsoftClient:
             if time.time() - start > 10:
                 raise TimeoutError("Timeout retrieving legends")
             time.sleep(0.2)
+=======
+        time.sleep(1)
+        path = self.command_socket.send_command("-xFilename")
+        self.command_socket.send_command(f'-f"{path}"')
+        try:
+            while True:
+                raw_data = self.command_socket.send_command(f"-lLegends -v{view}")
+                if raw_data != '0':
+                    legend = raw_data.replace("\r\n", "\t").split("\t")
+                    break
+                else:
+                    time.sleep(1)                
+        except KeyboardInterrupt:
+            print("Done.")
+        return legend, path
+
+    def get_legends_data(self, view=1):
+        """Retrieve column legends via a temporary socket."""
+        path = self.data_socket.send_command("-xFilename")
+        time.sleep(1)
+        path = self.data_socket.send_command("-xFilename")
+        self.command_socket.send_command(f'-f"{path}"')
+        try:
+            while True:
+                raw_data = self.command_socket.send_command(f"-lLegends -v{view}")
+                if raw_data != '0':
+                    legend = raw_data.replace("\r\n", "\t").split("\t")
+                    break
+                else:
+                    time.sleep(1)
+        except KeyboardInterrupt:
+            print("Done.")
+        return legend_data
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
 
     def query_filename(self):
         resp = self.command_socket.send_command('-xFilename')
-        if resp in ('0', ''):
-            raise RuntimeError("Failed to retrieve filename.")
+        if resp == '0':
+            raise RuntimeError("Failed querying filename.")
+        return resp
+
+    def query_filename_data(self):
+        """Return the filename currently associated with the command socket."""
+        resp = self.data_socket.send_command('-xFilename')
+        if resp == '0':
+            raise RuntimeError("Failed querying filename.")
         return resp
 
     def close_experiment(self):
+<<<<<<< HEAD
         try:
             resp = self.command_socket.send_command('-xClose')
         except Exception as ex:
@@ -272,6 +411,18 @@ class MASsoftClient:
             return
         if resp not in ('1', ''):
             logging.warning("Abort returned unexpected response")
+=======
+        """Close the experiment file."""
+        resp = self.command_socket.send_command('-xClose')
+        if resp == '0':
+            raise RuntimeError("Close failed.")
+        
+    def abort_experiment(self):
+        """Abort the experiment."""
+        resp = self.command_socket.send_command('-xAbort')
+        if resp == '0':
+            raise RuntimeError("Abort failed.")
+>>>>>>> 0c250acc164651cb67d67172c79817375ce6ba28
 
     def shutdown(self):
         self.command_socket.close()
@@ -280,6 +431,7 @@ class MASsoftClient:
 
 
 # Example IPython Usage:
+# from massoft_client import MASsoftClient
 # client = MASsoftClient(); client.initialize()
 # client.open_experiment('file56.exp')
 # client.run_experiment(); client.associate_status_link()
