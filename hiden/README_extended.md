@@ -2,8 +2,8 @@
 
 This guide documents the tested workflow for:
 
-- `massoft_client_rewrite2_extended.py`
-- `cap2_rewrite2_extended.py`
+- `massoft_client_extended.py`
+- `cap2_extended.py`
 
 ## 0) Runtime JSON config
 
@@ -34,6 +34,7 @@ Important keys currently consumed by code:
 - `ioc.default_go_od`
 - `ioc.default_go_ot`
 - `ioc.default_go_filename`
+- `ioc.start_links_on_open_exp` (used by fixed IOC only)
 - `ioc.default_data_cycles` (extended IOC)
 - `ioc.default_data_time_fmt` (extended IOC)
 - `ioc.default_data_ms_fmt` (extended IOC)
@@ -44,7 +45,7 @@ Other keys in the file (for example `archiver.*`, `epics.*`) are stored for oper
 
 ```powershell
 cd C:\repo\Hiden
-python hiden\cap2_rewrite2_extended.py --list-pvs -v
+python hiden\cap2_extended.py --list-pvs -v
 ```
 
 The IOC intentionally keeps running in this terminal.

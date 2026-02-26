@@ -17,6 +17,7 @@
     "default_go_od": 1,
     "default_go_ot": 1,
     "default_go_filename": "",
+    "start_links_on_open_exp": 0,
     "default_data_cycles": 1,
     "default_data_time_fmt": 0,
     "default_data_ms_fmt": 0
