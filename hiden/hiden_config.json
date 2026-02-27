@@ -3,7 +3,7 @@
   "massoft": {
     "host": "10.66.58.227",
     "port": 5026,
-    "experiment_directory": "C:\\Users\\08id-user\\Documents\\Hiden Analytical\\MASsoft\\11",
+    "experiment_directory": "C:\\Users\\xf08id1\\Documents\\Hiden Analytical\\MASsoft\\11",
     "retry_s": 15,
     "command_timeout_s": 20.0,
     "link_chunk_timeout_s": 1.0,
