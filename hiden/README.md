@@ -1,4 +1,4 @@
-# Hiden MASsoft Fixed IOC: Operator Guide
+# Hiden MASsoft IOC: Operator Guide
 
 This guide documents the stable production pair:
 
@@ -42,7 +42,7 @@ Keys used by fixed code:
 - `ioc.start_links_on_open_exp` (`0` recommended; start links on `Acquire=1`)
 - `ioc.update_period_s`
 
-## 1) Start the fixed IOC
+## 1) Start the IOC
 
 ```bash
 cd /path/to/repo/Hiden
@@ -75,24 +75,47 @@ $env:EPICS_CA_REPEATER_PORT="5065"
 
 ### Open experiment
 
+```bash
+caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp" # Stages the file to be open. This is just an example. Any file name can be called as soon as exists in folder
+caput XF:08IDB-SE{RGA:1}:View 1 # Window view number in MASsoft of data to be streamed
+caput XF:08IDB-SE{RGA:1}:OpenExp 1 # Opens the staged file
+caget XF:08IDB-SE{RGA:1}:Connected # Should return [1] for connected state and [0] for disconnected state
+caget -S XF:08IDB-SE{RGA:1}:Status # Returns present status of the unit
+caget -S XF:08IDB-SE{RGA:1}:LastError # Return last error registered. Return [] if no error since last session
+```
+
 ```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:ExpName' 'file56.exp'
-caproto-put 'XF:08IDB-SE{RGA:1}:View' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:OpenExp' 1
-caproto-get 'XF:08IDB-SE{RGA:1}:Connected'
-caproto-get -S 'XF:08IDB-SE{RGA:1}:Status' 'XF:08IDB-SE{RGA:1}:LastError'
+caproto-put -S 'XF:08IDB-SE{RGA:1}:ExpName' 'file56.exp' # Stages the file to be open. This is just an example. Any file name can be called as soon as exists in folder
+caproto-put 'XF:08IDB-SE{RGA:1}:View' 1 # Window view number in MASsoft of data to be streamed
+caproto-put 'XF:08IDB-SE{RGA:1}:OpenExp' 1 # Opens the staged file
+caproto-get 'XF:08IDB-SE{RGA:1}:Connected' # Should return [1] for connected state and [0] for disconnected state
+caproto-get -S 'XF:08IDB-SE{RGA:1}:Status' 'XF:08IDB-SE{RGA:1}:LastError' # Return last error registered. Return [] if no error since last session
 ```
 
 ### Start scan and publish PV updates (starts links lazily)
 
+```bash
+caput XF:08IDB-SE{RGA:1}:Go 1 # Default open mode. It creates a new file based on the initial template with a date-time subfolder/file naming
+# caput XF:08IDB-SE{RGA:1}:GoOD 1 # Alternative modes of opening files.
+# caput XF:08IDB-SE{RGA:1}:GoOT 1 # Alternative modes of opening files.
+caput XF:08IDB-SE{RGA:1}:Acquire 1 # Triggers the data parsing and PVs creation
+```
+
 ```powershell
-caproto-put 'XF:08IDB-SE{RGA:1}:GoOD' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:GoOT' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:Go' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:Acquire' 1
+caproto-put 'XF:08IDB-SE{RGA:1}:Go' 1 # Default open mode. It creates a new file based on the initial template with a date-time subfolder/file naming
+# caproto-put 'XF:08IDB-SE{RGA:1}:GoOD' 1 # Alternative modes of opening files.
+# caproto-put 'XF:08IDB-SE{RGA:1}:GoOT' 1 # Alternative modes of opening files.
+caproto-put 'XF:08IDB-SE{RGA:1}:Acquire' 1 # Triggers the data parsing and PVs creation
 ```
 
 ### Monitor live data
+
+```bash
+camonitor -S XF:08IDB-SE{RGA:1}:Status # Reports the status of the unit
+camonitor XF:08IDB-SE{RGA:1}:DataAge # Time stamp of the last data cycle
+camonitor XF:08IDB-SE{RGA:1}P:MID1-I # Example of monitored PV
+camonitor XF:08IDB-SE{RGA:1}:LastError # Checking for errors
+```
 
 ```powershell
 caproto-monitor 'XF:08IDB-SE{RGA:1}:Status' 'XF:08IDB-SE{RGA:1}:DataAge' 'XF:08IDB-SE{RGA:1}P:MID1-I' 'XF:08IDB-SE{RGA:1}:LastError'
@@ -106,6 +129,13 @@ Expected:
 - `LastError` remains empty.
 
 ## 4) Shutdown sequence
+
+```bash
+caput XF:08IDB-SE{RGA:1}:Abort 1
+caput XF:08IDB-SE{RGA:1}:Close 1
+caget XF:08IDB-SE{RGA:1}:Connected
+caget -S XF:08IDB-SE{RGA:1}:Status
+```
 
 ```powershell
 caproto-put 'XF:08IDB-SE{RGA:1}:Abort' 1
