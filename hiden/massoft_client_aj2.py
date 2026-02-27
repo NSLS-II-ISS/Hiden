@@ -38,7 +38,7 @@ DEFAULT_CONFIG_FILE_NAME = "hiden_config.json"
 
 MAS_HOST = "10.66.58.227"
 MAS_PORT = 5026
-EXPERIMENT_DIRECTORY = r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
+EXPERIMENT_DIRECTORY = r"C:\Users\xf08id1\Documents\Hiden Analytical\MASsoft\11"
 EXPERIMENT_DIRECTORY_ENV = "HIDEN_FilePath"
 MOST_RECENT_FILE = "HIDEN_LastFile"
 TEMPLATE_DICT = {
@@ -126,7 +126,7 @@ class MASsoftConfig:
 
     # Directory used when ``open_experiment("file56.exp")`` is called.
     experiment_directory: str = (
-        r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
+        r"C:\Users\xf08id1\Documents\Hiden Analytical\MASsoft\11"
     )
 
     # Default MASsoft "-d<t>" retry window for commands that support it.
