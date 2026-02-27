@@ -19,7 +19,7 @@ import time
 
 from caproto.server import PVGroup, ioc_arg_parser, pvproperty, run
 
-from .massoft_client import MASsoftClient, load_runtime_config
+from .massoft_client_aj2 import MASsoftClient, load_runtime_config
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO)
