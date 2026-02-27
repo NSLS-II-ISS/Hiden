@@ -36,7 +36,7 @@ DEFAULT_CONFIG_FILE_NAME = "hiden_config.json"
 # Module-level constants (backward compat for IPython workflows)
 # ---------------------------------------------------------------------------
 
-MAS_HOST = "10.66.58.225"
+MAS_HOST = "10.66.58.227"
 MAS_PORT = 5026
 EXPERIMENT_DIRECTORY = r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
 EXPERIMENT_DIRECTORY_ENV = "HIDEN_FilePath"
@@ -121,7 +121,7 @@ class MASsoftProtocolError(MASsoftError):
 @dataclass(frozen=True)
 class MASsoftConfig:
     beamline_name: str = "08IDB"
-    host: str = "10.66.58.225"
+    host: str = "10.66.58.227"
     port: int = 5026
 
     # Directory used when ``open_experiment("file56.exp")`` is called.

@@ -1,7 +1,7 @@
 {
   "beamline_name": "08IDB",
   "massoft": {
-    "host": "10.66.58.225",
+    "host": "10.66.58.227",
     "port": 5026,
     "experiment_directory": "C:\\Users\\08id-user\\Documents\\Hiden Analytical\\MASsoft\\11",
     "retry_s": 15,
