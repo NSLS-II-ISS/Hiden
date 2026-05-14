@@ -111,11 +111,12 @@ class MASsoftProtocolError(MASsoftError):
 @dataclass(frozen=True)
 class MASsoftConfig:
     beamline_name: str = "08IDB"
-    host: str = "10.66.58.225"
+    host: str = "10.66.58.227"
     port: int = 5026
 
     # Directory used when `open_experiment("file56.exp")` is called.
-    experiment_directory: str = r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
+    # experiment_directory: str = r"C:\Users\08id-user\Documents\Hiden Analytical\MASsoft\11"
+    experiment_directory: str = r"C:\Users\xf08id1\Documents\Hiden Analytical\MASsoft\11"
 
     # Default MASsoft "-d<t>" retry window for commands that support it.
     retry_s: int = 15
