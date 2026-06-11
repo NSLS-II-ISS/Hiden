@@ -372,7 +372,9 @@ class RGAIOC(PVGroup):
                 row_ts = self.client.get_latest_row_timestamp()
                 row = self.client.get_latest_row()
                 if row and row_ts > self._last_pub_row_ts:
-                    for idx, val in enumerate(row[:10], start=1):
+                    row_values = row[:10]
+                    for idx in range(1, 11):
+                        val = row_values[idx - 1] if idx <= len(row_values) else 0.0
                         await getattr(self, f"mid{idx}").write(val)
                     self._last_pub_row_ts = row_ts
 
