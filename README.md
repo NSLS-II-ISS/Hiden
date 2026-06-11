@@ -9,6 +9,18 @@ This repository keeps two runnable IOC options:
 
 Use this option when running from the managed pixi environment on the IOC host.
 
+Network topology:
+
+```text
+IOC server INST:       10.66.58.30
+IOC server EPICS:      10.66.59.30
+MASsoft Windows INST:  10.66.58.227:5026
+MASsoft Windows EPICS: 10.66.59.227
+EPICS broadcast:       10.66.59.255
+```
+
+The IOC talks to MASsoft on the INST subnet at `10.66.58.227:5026`. Caproto publishes PVs on the EPICS subnet and sends beacons to `10.66.59.255`.
+
 The pixi task in `pixi.toml` runs:
 
 ```bash
@@ -47,10 +59,10 @@ The EPICS Channel Access variables are set in `pixi.toml` under `[activation.env
 ```toml
 EPICS_CA_SERVER_PORT = "5064"
 EPICS_CA_REPEATER_PORT = "5065"
-EPICS_CA_ADDR_LIST = "10.66.59.227"
+EPICS_CA_ADDR_LIST = "10.66.59.255"
 EPICS_CA_AUTO_ADDR_LIST = "NO"
 EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
-EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.227"
+EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
 ```
 
 Runtime MASsoft and IOC defaults come from:

@@ -16,6 +16,18 @@ Use `cap2.py` when you want the smaller IOC implementation without pixi task man
 
 This option still reads `hiden_config.json`, exposes the core Hiden RGA PVs, and uses MASsoft sockets through `massoft_client.py`.
 
+Network topology:
+
+```text
+IOC server INST:       10.66.58.30
+IOC server EPICS:      10.66.59.30
+MASsoft Windows INST:  10.66.58.227:5026
+MASsoft Windows EPICS: 10.66.59.227
+EPICS broadcast:       10.66.59.255
+```
+
+The IOC talks to MASsoft on the INST subnet at `10.66.58.227:5026`. Caproto publishes PVs on the EPICS subnet and sends beacons to `10.66.59.255`.
+
 ## Runtime Config
 
 Default config file:
@@ -80,10 +92,10 @@ For bash on the IOC host:
 ```bash
 export EPICS_CA_SERVER_PORT="5064"
 export EPICS_CA_REPEATER_PORT="5065"
-export EPICS_CA_ADDR_LIST="10.66.59.227"
+export EPICS_CA_ADDR_LIST="10.66.59.255"
 export EPICS_CA_AUTO_ADDR_LIST="NO"
 export EPICS_CAS_AUTO_BEACON_ADDR_LIST="NO"
-export EPICS_CAS_BEACON_ADDR_LIST="10.66.59.227"
+export EPICS_CAS_BEACON_ADDR_LIST="10.66.59.255"
 ```
 
 For PowerShell:
@@ -91,10 +103,10 @@ For PowerShell:
 ```powershell
 $env:EPICS_CA_SERVER_PORT = "5064"
 $env:EPICS_CA_REPEATER_PORT = "5065"
-$env:EPICS_CA_ADDR_LIST = "10.66.59.227"
+$env:EPICS_CA_ADDR_LIST = "10.66.59.255"
 $env:EPICS_CA_AUTO_ADDR_LIST = "NO"
 $env:EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
-$env:EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.227"
+$env:EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
 ```
 
 ## Core PVs
