@@ -136,9 +136,11 @@ XF:08IDB-SE{RGA:1}:StatusAge
 Data readbacks:
 
 ```text
-XF:08IDB-SE{RGA:1}P:MID1-I ... XF:08IDB-SE{RGA:1}P:MID10-I
-XF:08IDB-VA{RGA:1}Mass:MID1 ... XF:08IDB-VA{RGA:1}Mass:MID10
+XF:08IDB-SE{RGA:1}P:MID1-I ... XF:08IDB-SE{RGA:1}P:MID20-I
+XF:08IDB-VA{RGA:1}Mass:MID1 ... XF:08IDB-VA{RGA:1}Mass:MID20
 ```
+
+If a MASsoft recipe exposes fewer than 20 MID channels, the unused readbacks remain `0`.
 
 ## Operating Sequence
 

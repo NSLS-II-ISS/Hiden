@@ -35,6 +35,8 @@ _IOC_CFG = _RUNTIME_CFG.get("ioc", {}) if isinstance(_RUNTIME_CFG, dict) else {}
 if not isinstance(_IOC_CFG, dict):
     _IOC_CFG = {}
 
+MAX_MIDS = 20
+
 
 def _ioc_default(name: str, default):
     val = _IOC_CFG.get(name, default)
@@ -339,10 +341,10 @@ class RGAIOC(PVGroup):
     )
 
     # -----------------------------------------------------------------
-    # MID-I readbacks (1-10)
+    # MID-I readbacks (1-MAX_MIDS)
     # -----------------------------------------------------------------
 
-    for idx in range(1, 11):
+    for idx in range(1, MAX_MIDS + 1):
         locals()[f"mid{idx}"] = pvproperty(
             name=f"XF:08IDB-SE{{{{RGA:1}}}}P:MID{idx}-I",
             value=0.0,
@@ -352,10 +354,10 @@ class RGAIOC(PVGroup):
     del idx
 
     # -----------------------------------------------------------------
-    # Mass readbacks (1-10)
+    # Mass readbacks (1-MAX_MIDS)
     # -----------------------------------------------------------------
 
-    for idx in range(1, 11):
+    for idx in range(1, MAX_MIDS + 1):
         locals()[f"mass{idx}"] = pvproperty(
             name=f"XF:08IDB-VA{{{{RGA:1}}}}Mass:MID{idx}",
             value=0.0,
@@ -408,7 +410,7 @@ class RGAIOC(PVGroup):
             legends = await asyncio.to_thread(
                 self.client.fetch_legends_once, view=view
             )
-            masses = self._extract_masses(legends)[:10]
+            masses = self._extract_masses(legends)[:MAX_MIDS]
             self._mass_vals = masses
 
             for i, m in enumerate(self._mass_vals, start=1):
@@ -652,7 +654,7 @@ class RGAIOC(PVGroup):
 
             # Fetch legends and populate mass PVs
             legends, path = await asyncio.to_thread(self.client.get_legends, view)
-            mass_vals = self._extract_masses(legends)[:10]
+            mass_vals = self._extract_masses(legends)[:MAX_MIDS]
             self._mass_vals = mass_vals
             for i, m in enumerate(mass_vals, start=1):
                 await getattr(self, f"mass{i}").write(m)
@@ -697,8 +699,8 @@ class RGAIOC(PVGroup):
             row = self.client.get_latest_row()
             row_ts = self.client.get_latest_row_timestamp()
             if row and row_ts > self._last_pub_row_ts:
-                row_values = row[:10]
-                for i in range(1, 11):
+                row_values = row[:MAX_MIDS]
+                for i in range(1, MAX_MIDS + 1):
                     val = row_values[i - 1] if i <= len(row_values) else 0.0
                     await getattr(self, f"mid{i}").write(val)
                 self._last_pub_row_ts = row_ts

@@ -159,6 +159,8 @@ caput XF:08IDB-SE{RGA:1}:RestartLinks 1
 
 `cap2_aj2.py` is the pixi production IOC wrapper. It exposes the PVs, keeps `OpenExp`, `Go`, `Abort`, `Close`, and `Acquire` as momentary controls, and adds diagnostic/generic command PVs for commissioning.
 
+The pixi IOC publishes MID intensity and mass readbacks from `MID1` through `MID20`. Recipes with fewer MID channels leave the unused PVs at `0`.
+
 `massoft_client_aj2.py` owns the MASsoft protocol work. It uses one command socket plus dedicated status and data hot-link sockets. A socket that has entered hot-link mode is not reused for normal commands; the client reconnects link sockets before restarting links. This avoids leaving MASsoft in a mixed command/listen state after aborts, restarts, or file changes.
 
 The intended lifecycle is:
