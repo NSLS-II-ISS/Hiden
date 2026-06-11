@@ -13,10 +13,10 @@ caproto = "*"
 # EPICS Channel Access environment (from hiden_config.json epics section)
 EPICS_CA_SERVER_PORT = "5064"
 EPICS_CA_REPEATER_PORT = "5065"
-EPICS_CA_ADDR_LIST = "10.66.59.227"
+EPICS_CA_ADDR_LIST = "10.66.59.257"
 EPICS_CA_AUTO_ADDR_LIST = "NO"
 EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
-EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.227"
+EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.257"
 
 [tasks]
 ioc = { cmd = "python cap2_aj2.py", cwd = "hiden", description = "Run the RGA IOC" }
