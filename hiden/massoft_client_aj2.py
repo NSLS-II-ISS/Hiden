@@ -1268,12 +1268,7 @@ class MASsoftClient:
 
                 if not include_ms and len(numeric) >= 2:
                     first_raw = parts[start]
-                    second_raw = parts[start + 1] if (start + 1) < len(parts) else ""
-                    first_is_intish = first_raw.isdigit() and int(first_raw) > 10
-                    second_is_scan_like = ("e" in second_raw.lower()) or (
-                        "." in second_raw
-                    )
-                    if first_is_intish and second_is_scan_like:
+                    if first_raw.isdigit() and int(first_raw) > 10:
                         numeric = numeric[1:]
 
                 if not numeric:
@@ -1471,10 +1466,7 @@ class MASsoftClient:
 
         if not include_ms and len(vals) >= 2:
             first_raw = parts[start]
-            second_raw = parts[start + 1] if (start + 1) < len(parts) else ""
-            if first_raw.isdigit() and int(first_raw) > 10 and (
-                ("e" in second_raw.lower()) or ("." in second_raw)
-            ):
+            if first_raw.isdigit() and int(first_raw) > 10:
                 vals = vals[1:]
 
         return vals
