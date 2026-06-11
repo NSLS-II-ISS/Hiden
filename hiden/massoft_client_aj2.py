@@ -498,6 +498,8 @@ class MASsoftClient:
 
         self._status_link: MASsoftHotlink | None = None
         self._data_link: MASsoftHotlink | None = None
+        self._status_link_socket_dirty = False
+        self._data_link_socket_dirty = False
 
         self._latest_status_lock = threading.Lock()
         self._latest_status: str | None = None
@@ -541,9 +543,16 @@ class MASsoftClient:
 
     def connect(self) -> None:
         """Connect all sockets (command + link sockets)."""
-        self.command.connect(enable_keepalive=self.cfg.enable_keepalive)
-        self.status_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
-        self.data_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
+        try:
+            self.command.connect(enable_keepalive=self.cfg.enable_keepalive)
+            self.status_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
+            self.data_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
+            self._status_link_socket_dirty = False
+            self._data_link_socket_dirty = False
+        except Exception:
+            with contextlib.suppress(Exception):
+                self.disconnect()
+            raise
 
     def disconnect(self) -> None:
         """Stop hot-links and close sockets."""
@@ -555,10 +564,43 @@ class MASsoftClient:
         self._command_assoc_file = None
         self._status_assoc_file = None
         self._data_assoc_file = None
+        self._status_link_socket_dirty = False
+        self._data_link_socket_dirty = False
         self._assoc_fallback_logged.clear()
         with self._extra_latest_lock:
             self._extra_latest.clear()
             self._extra_latest_ts.clear()
+
+    def _ensure_command_socket(self) -> None:
+        """Connect the command socket if it has not been opened yet."""
+        if not self.command.is_connected():
+            self.command.connect(enable_keepalive=self.cfg.enable_keepalive)
+
+    def _reconnect_status_socket(self) -> None:
+        """Return the status socket to command mode after any hot-link use."""
+        if self._status_link is not None:
+            self._status_link.stop()
+            self._status_link = None
+        self.status_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
+        self._status_assoc_file = None
+        self._status_link_socket_dirty = False
+        self._assoc_fallback_logged.discard(self.status_sock.name)
+
+    def _reconnect_data_socket(self) -> None:
+        """Return the data socket to command mode after any hot-link use."""
+        if self._data_link is not None:
+            self._data_link.stop()
+            self._data_link = None
+        self.data_sock.connect(enable_keepalive=self.cfg.enable_keepalive)
+        self._data_assoc_file = None
+        self._data_link_socket_dirty = False
+        self._assoc_fallback_logged.discard(self.data_sock.name)
+
+    def reconnect_link_sockets(self) -> None:
+        """Close/reopen dedicated link sockets before issuing new link commands."""
+        self.stop_links(close_core_sockets=True)
+        self._reconnect_status_socket()
+        self._reconnect_data_socket()
 
     def initialize(self) -> None:
         """Compat: connect all sockets.  Delegates to ``connect()``."""
@@ -632,12 +674,16 @@ class MASsoftClient:
         if retry_s is None:
             retry_s = self.cfg.retry_s
 
+        self._ensure_command_socket()
+
         if file_name_or_path is None:
             path = self.query_filename(retry_s=retry_s, update_current=True)
         else:
             if isinstance(file_name_or_path, (list, tuple)):
                 file_name_or_path = file_name_or_path[0]
             path = self._resolve_path(file_name_or_path)
+
+        self.reconnect_link_sockets()
 
         r = self.command.request(
             f'-f"{path}"',
@@ -944,12 +990,9 @@ class MASsoftClient:
             msg = "MASsoft refused -xClose (returned 0)"
             raise MASsoftProtocolError(msg)
 
-        self.stop_links()
-        self.current_file = None
-        self._command_assoc_file = None
-        self._status_assoc_file = None
-        self._data_assoc_file = None
-        self._assoc_fallback_logged.clear()
+        # MASsoft closes all file-associated sockets after -xClose. Mirror that
+        # locally so the next OpenExp starts from known-good TCP connections.
+        self.disconnect()
 
     def x_call(
         self,
@@ -990,8 +1033,7 @@ class MASsoftClient:
                 self.query_filename(retry_s=retry_s, update_current=True)
 
         if cmd.lower().startswith("-xclose"):
-            self.stop_links()
-            self.current_file = None
+            self.disconnect()
 
         return r
 
@@ -1105,8 +1147,8 @@ class MASsoftClient:
         self.x_abort()
 
     def close_experiment(self) -> None:
-        """Compat: close the experiment.  Delegates to ``x_close()``."""
-        self.x_close()
+        """Compat: safely stop and close the experiment."""
+        self.safe_abort_and_close()
 
     # -------------------------------------------------------------------
     # Links (-l*) for status/data
@@ -1120,11 +1162,17 @@ class MASsoftClient:
                 msg
             )
 
+        if self._status_link is not None or self._status_link_socket_dirty:
+            self._reconnect_status_socket()
+        elif not self.status_sock.is_connected():
+            self._reconnect_status_socket()
+
         self._associate_socket_with_active_file(
             self.status_sock, retry_s=self.cfg.retry_s
         )
 
         self.status_sock.send(f"-lStatus -v{int(view)}", retry_s=self.cfg.retry_s)
+        self._status_link_socket_dirty = True
 
         def _on(lines: list[str]) -> None:
             for line in lines:
@@ -1159,6 +1207,11 @@ class MASsoftClient:
                 msg
             )
 
+        if self._data_link is not None or self._data_link_socket_dirty:
+            self._reconnect_data_socket()
+        elif not self.data_sock.is_connected():
+            self._reconnect_data_socket()
+
         self._associate_socket_with_active_file(
             self.data_sock, retry_s=self.cfg.retry_s
         )
@@ -1171,6 +1224,7 @@ class MASsoftClient:
         if c != 1 or t != 0 or m != 0:
             cmd += f" -c{c} -t{t} -m{m}"
         self.data_sock.send(cmd, retry_s=self.cfg.retry_s)
+        self._data_link_socket_dirty = True
 
         drop = (1 if include_time else 0) + (1 if include_ms else 0)
 
@@ -1244,14 +1298,21 @@ class MASsoftClient:
         )
         self._data_link.start()
 
-    def stop_links(self) -> None:
-        """Stop status/data hot-links and extra hot-links (does not close sockets)."""
+    def stop_links(self, *, close_core_sockets: bool = False) -> None:
+        """Stop hot-links; optionally close core link sockets before reuse."""
         if self._status_link is not None:
             self._status_link.stop()
             self._status_link = None
         if self._data_link is not None:
             self._data_link.stop()
             self._data_link = None
+        if close_core_sockets:
+            self.status_sock.close()
+            self.data_sock.close()
+            self._status_assoc_file = None
+            self._data_assoc_file = None
+            self._status_link_socket_dirty = False
+            self._data_link_socket_dirty = False
         self.stop_all_hotlinks()
 
     # -------------------------------------------------------------------

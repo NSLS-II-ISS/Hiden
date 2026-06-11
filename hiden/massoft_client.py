@@ -399,9 +399,9 @@ class MASsoftClient:
     def __init__(self, cfg: Optional[MASsoftConfig] = None, *, config_path: Optional[str] = None):
         self.cfg = cfg if cfg is not None else MASsoftConfig.from_runtime_config(config_path=config_path)
 
-        self.command = _CRLFSocket(cfg.host, cfg.port, name="MASsoftCommand", timeout_s=cfg.command_timeout_s)
-        self.status_sock = _CRLFSocket(cfg.host, cfg.port, name="MASsoftStatus", timeout_s=cfg.link_chunk_timeout_s)
-        self.data_sock = _CRLFSocket(cfg.host, cfg.port, name="MASsoftData", timeout_s=cfg.link_chunk_timeout_s)
+        self.command = _CRLFSocket(self.cfg.host, self.cfg.port, name="MASsoftCommand", timeout_s=self.cfg.command_timeout_s)
+        self.status_sock = _CRLFSocket(self.cfg.host, self.cfg.port, name="MASsoftStatus", timeout_s=self.cfg.link_chunk_timeout_s)
+        self.data_sock = _CRLFSocket(self.cfg.host, self.cfg.port, name="MASsoftData", timeout_s=self.cfg.link_chunk_timeout_s)
 
         self.current_file: Optional[str] = None
         self._command_assoc_file: Optional[str] = None

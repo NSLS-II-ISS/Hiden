@@ -365,13 +365,12 @@ class RGAIOC(PVGroup):
     del idx
 
     # -----------------------------------------------------------------
-    # Constructor (eager connect)
+    # Constructor
     # -----------------------------------------------------------------
 
     def __init__(self, *args, mas_host=None, mas_port=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.client = MASsoftClient(host=mas_host, port=mas_port)
-        self.client.connect()
         self._running = False
         self._acq_task: asyncio.Task | None = None
         self._links_started = False
@@ -387,7 +386,7 @@ class RGAIOC(PVGroup):
 
     @open_exp.putter
     async def open_exp(self, instance, value):
-        """Connect if needed, open/associate experiment, fetch legends, start links."""
+        """Connect if needed, open/associate experiment, and fetch legends."""
         if not int(value):
             return value
 
@@ -400,8 +399,8 @@ class RGAIOC(PVGroup):
         LOG.info("Opening experiment: %s (view=%d)", fname, view)
 
         try:
-            if not self.client.command.is_connected():
-                await asyncio.to_thread(self.client.connect)
+            await self._stop_update_task()
+            self._links_started = False
 
             await asyncio.to_thread(self.client.open_experiment, fname)
             await self._refresh_active_file()
@@ -414,9 +413,6 @@ class RGAIOC(PVGroup):
 
             for i, m in enumerate(self._mass_vals, start=1):
                 await getattr(self, f"mass{i}").write(m)
-
-            if not self._links_started:
-                await self._start_core_links(view=view)
 
             await self.connected.write(1)
             await self.status.write(
@@ -437,6 +433,9 @@ class RGAIOC(PVGroup):
         if int(value):
             try:
                 await asyncio.to_thread(self.client.run_experiment)
+                await self._refresh_active_file()
+                if self._links_started:
+                    await self._restart_core_links(view=max(1, int(self.view.value or 1)))
             except Exception as exc:
                 LOG.exception("RunExp failed")
                 await self.last_error.write(repr(exc))
@@ -444,10 +443,16 @@ class RGAIOC(PVGroup):
 
     @abort_exp.putter
     async def abort_exp(self, instance, value):
-        """Write 1 to abort the running experiment."""
+        """Write 1 to abort the running experiment and wait until stopped."""
         if int(value):
             try:
-                await asyncio.to_thread(self.client.abort_experiment)
+                final = await asyncio.to_thread(
+                    self.client.safe_abort_and_wait,
+                    timeout_s=30.0,
+                )
+                await self.status.write(final)
+            except MASsoftTimeout as exc:
+                await self.last_error.write(repr(exc))
             except Exception as exc:
                 LOG.exception("AbortExp failed")
                 await self.last_error.write(repr(exc))
@@ -462,11 +467,12 @@ class RGAIOC(PVGroup):
         try:
             await self._stop_update_task()
 
-            if self._links_started:
-                self.client.stop_links()
-                self._links_started = False
-
-            await asyncio.to_thread(self.client.close_experiment)
+            await asyncio.to_thread(
+                self.client.safe_abort_and_close,
+                abort_timeout_s=30.0,
+                reconnect=False,
+            )
+            self._links_started = False
             await self.connected.write(0)
             await self.status.write("Disconnected")
             await self.active_file.write("")
@@ -487,6 +493,8 @@ class RGAIOC(PVGroup):
             fn = (self.go_filename.value or "").strip() or None
             await asyncio.to_thread(self.client.x_go, filename=fn, od=od, ot=ot)
             await self._refresh_active_file()
+            if self._links_started:
+                await self._restart_core_links(view=max(1, int(self.view.value or 1)))
         except Exception as exc:
             LOG.exception("Go failed")
             await self.last_error.write(repr(exc))
@@ -558,9 +566,7 @@ class RGAIOC(PVGroup):
         if not int(value):
             return value
         try:
-            await asyncio.to_thread(self.client.stop_links)
-            self._links_started = False
-            await self._start_core_links(view=int(self.view.value))
+            await self._restart_core_links(view=max(1, int(self.view.value or 1)))
         except Exception as exc:
             LOG.exception("RestartLinks failed")
             await self.last_error.write(repr(exc))
@@ -763,15 +769,27 @@ class RGAIOC(PVGroup):
         c = int(self.data_cycles.value)
         t = bool(int(self.data_time_fmt.value))
         m = bool(int(self.data_ms_fmt.value))
-        await asyncio.to_thread(self.client.start_status_link, view=view)
-        await asyncio.to_thread(
-            self.client.start_data_link,
-            view=view,
-            mid_cycles=max(1, c),
-            include_time=t,
-            include_ms=m,
-        )
-        self._links_started = True
+        try:
+            await asyncio.to_thread(self.client.start_status_link, view=view)
+            await asyncio.to_thread(
+                self.client.start_data_link,
+                view=view,
+                mid_cycles=max(1, c),
+                include_time=t,
+                include_ms=m,
+            )
+            self._links_started = True
+        except Exception:
+            self._links_started = False
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(self.client.stop_links, close_core_sockets=True)
+            raise
+
+    async def _restart_core_links(self, *, view: int) -> None:
+        """Restart core hot-links on fresh TCP sockets."""
+        await asyncio.to_thread(self.client.stop_links, close_core_sockets=True)
+        self._links_started = False
+        await self._start_core_links(view=view)
 
     async def _refresh_active_file(self) -> None:
         """Query -xFilename and update the ActiveFile PV."""

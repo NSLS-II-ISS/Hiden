@@ -1,228 +1,200 @@
-# Hiden MASsoft IOC: Operator Guide
+# Direct Python IOC
 
-This guide documents the production pair:
+This README documents the direct Python option:
 
-- `massoft_client_aj2.py`
+- `cap2.py`
+- `massoft_client.py`
+
+Use the repository root `README.md` for the pixi option:
+
 - `cap2_aj2.py`
+- `massoft_client_aj2.py`
 
-## 0) Runtime JSON config
+## When To Use This Option
 
-The client/IOC read runtime settings from:
+Use `cap2.py` when you want the smaller IOC implementation without pixi task management or the extended `_aj2` commissioning PVs.
 
-- `hiden/hiden_config.json`
+This option still reads `hiden_config.json`, exposes the core Hiden RGA PVs, and uses MASsoft sockets through `massoft_client.py`.
 
-Override config path with:
+## Runtime Config
+
+Default config file:
 
 ```bash
-export HIDEN_CONFIG=/path/to/my_hiden_config.json
+hiden/hiden_config.json
 ```
 
-or on Windows:
+Override it with:
+
+```bash
+export HIDEN_CONFIG=/path/to/hiden_config.json
+```
+
+PowerShell:
 
 ```powershell
-$env:HIDEN_CONFIG='C:\path\to\my_hiden_config.json'
+$env:HIDEN_CONFIG = "C:\path\to\hiden_config.json"
 ```
 
-Keys used by code:
+Important config keys:
 
-- `beamline_name`
-- `massoft.host`
-- `massoft.port`
-- `massoft.experiment_directory`
-- `massoft.retry_s`
-- `massoft.command_timeout_s`
-- `massoft.link_chunk_timeout_s`
-- `massoft.link_burst_gap_s`
-- `massoft.enable_keepalive`
-- `ioc.default_experiment`
-- `ioc.default_view`
-- `ioc.default_go_od`
-- `ioc.default_go_ot`
-- `ioc.default_go_filename`
-- `ioc.update_period_s`
-- `ioc.default_data_cycles`
-- `ioc.default_data_time_fmt`
-- `ioc.default_data_ms_fmt`
+```text
+massoft.host
+massoft.port
+massoft.experiment_directory
+massoft.retry_s
+massoft.command_timeout_s
+massoft.link_chunk_timeout_s
+massoft.link_burst_gap_s
+massoft.enable_keepalive
+ioc.default_experiment
+ioc.default_view
+ioc.update_period_s
+ioc.start_links_on_open_exp
+```
 
-Other keys in the file (for example `archiver.*`, `epics.*`) are stored for operator tuning/reference and can be consumed by external tools/scripts.
+## Start The IOC
 
-## 1) Start the IOC
+From the repository root:
 
 ```bash
-cd /path/to/repo/Hiden
-python hiden/cap2_aj2.py --list-pvs -v
+python hiden/cap2.py
 ```
 
-The IOC should keep running in this terminal.
-
-## 2) Configure EPICS CA networking
-
-### RHEL 8 IOC server (controls support settings)
+List PVs:
 
 ```bash
-export EPICS_CA_AUTO_ADDR_LIST=no
-export EPICS_CAS_AUTO_BEACON_ADDR_LIST=no
-export EPICS_CAS_BEACON_ADDR_LIST=10.66.59.255
-export EPICS_CA_ADDR_LIST=10.66.59.255
+python hiden/cap2.py --list-pvs -q
 ```
 
-### Windows client/testing shell (example)
+If you are using pixi only for dependencies, but still want the direct IOC code path:
+
+```bash
+pixi run python hiden/cap2.py
+```
+
+## EPICS Environment
+
+For bash on the IOC host:
+
+```bash
+export EPICS_CA_SERVER_PORT="5064"
+export EPICS_CA_REPEATER_PORT="5065"
+export EPICS_CA_ADDR_LIST="10.66.59.227"
+export EPICS_CA_AUTO_ADDR_LIST="NO"
+export EPICS_CAS_AUTO_BEACON_ADDR_LIST="NO"
+export EPICS_CAS_BEACON_ADDR_LIST="10.66.59.227"
+```
+
+For PowerShell:
 
 ```powershell
-$env:EPICS_CA_ADDR_LIST="127.0.0.1 10.66.56.225"
-$env:EPICS_CA_AUTO_ADDR_LIST="NO"
-$env:EPICS_CA_SERVER_PORT="5064"
-$env:EPICS_CA_REPEATER_PORT="5065"
+$env:EPICS_CA_SERVER_PORT = "5064"
+$env:EPICS_CA_REPEATER_PORT = "5065"
+$env:EPICS_CA_ADDR_LIST = "10.66.59.227"
+$env:EPICS_CA_AUTO_ADDR_LIST = "NO"
+$env:EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
+$env:EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.227"
 ```
 
-## 3) Core operating sequence
+## Core PVs
 
-### Open experiment
+Experiment and scan controls:
+
+```text
+XF:08IDB-SE{RGA:1}:ExpName
+XF:08IDB-SE{RGA:1}:View
+XF:08IDB-SE{RGA:1}:OpenExp
+XF:08IDB-SE{RGA:1}:Go
+XF:08IDB-SE{RGA:1}:Abort
+XF:08IDB-SE{RGA:1}:Close
+XF:08IDB-SE{RGA:1}:Acquire
+```
+
+Diagnostics:
+
+```text
+XF:08IDB-SE{RGA:1}:Connected
+XF:08IDB-SE{RGA:1}:Status
+XF:08IDB-SE{RGA:1}:LastError
+XF:08IDB-SE{RGA:1}:DataAge
+XF:08IDB-SE{RGA:1}:StatusAge
+```
+
+Data readbacks:
+
+```text
+XF:08IDB-SE{RGA:1}P:MID1-I ... XF:08IDB-SE{RGA:1}P:MID10-I
+XF:08IDB-VA{RGA:1}Mass:MID1 ... XF:08IDB-VA{RGA:1}Mass:MID10
+```
+
+## Operating Sequence
+
+Open the experiment:
 
 ```bash
-caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp" # Stages the file to be open. This is just an example. Any file name can be called as soon as exists in folder
-caput XF:08IDB-SE{RGA:1}:View 1 # Window view number in MASsoft of data to be streamed
-caput XF:08IDB-SE{RGA:1}:OpenExp 1 # Opens the staged file
-caget XF:08IDB-SE{RGA:1}:Connected # Should return [1] for connected state and [0] for disconnected state
-caget -S XF:08IDB-SE{RGA:1}:Status # Returns present status of the unit
-caget -S XF:08IDB-SE{RGA:1}:LastError # Return last error registered. Return [] if no error since last session
+caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp"
+caput XF:08IDB-SE{RGA:1}:View 1
+caput XF:08IDB-SE{RGA:1}:OpenExp 1
+caget XF:08IDB-SE{RGA:1}:Connected
+caget -S XF:08IDB-SE{RGA:1}:Status
+caget -S XF:08IDB-SE{RGA:1}:LastError
 ```
 
-```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:ExpName' 'file56.exp' # Stages the file to be open. This is just an example. Any file name can be called as soon as exists in folder
-caproto-put 'XF:08IDB-SE{RGA:1}:View' 1 # Window view number in MASsoft of data to be streamed
-caproto-put 'XF:08IDB-SE{RGA:1}:OpenExp' 1 # Opens the staged file
-caproto-get 'XF:08IDB-SE{RGA:1}:Connected' # Should return [1] for connected state and [0] for disconnected state
-caproto-get -S 'XF:08IDB-SE{RGA:1}:Status' 'XF:08IDB-SE{RGA:1}:LastError' # Return last error registered. Return [] if no error since last session
-```
-
-### Start scan and publish PV updates (starts links lazily)
+Start the MASsoft scan:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:Go 1 # Default open mode. It creates a new file based on the initial template with a date-time subfolder/file naming
-# caput XF:08IDB-SE{RGA:1}:GoOD 1 # Alternative modes of opening files.
-# caput XF:08IDB-SE{RGA:1}:GoOT 1 # Alternative modes of opening files.
-caput XF:08IDB-SE{RGA:1}:Acquire 1 # Triggers the data parsing and PVs creation
+caput XF:08IDB-SE{RGA:1}:Go 1
 ```
 
-```powershell
-caproto-put 'XF:08IDB-SE{RGA:1}:Go' 1 # Default open mode. It creates a new file based on the initial template with a date-time subfolder/file naming
-# caproto-put 'XF:08IDB-SE{RGA:1}:GoOD' 1 # Alternative modes of opening files.
-# caproto-put 'XF:08IDB-SE{RGA:1}:GoOT' 1 # Alternative modes of opening files.
-caproto-put 'XF:08IDB-SE{RGA:1}:Acquire' 1 # Triggers the data parsing and PVs creation
-```
-
-### Monitor live data
+Start publishing IOC data from MASsoft hot-links:
 
 ```bash
-camonitor -S XF:08IDB-SE{RGA:1}:Status # Reports the status of the unit
-camonitor XF:08IDB-SE{RGA:1}:DataAge # Time stamp of the last data cycle
-camonitor XF:08IDB-SE{RGA:1}P:MID1-I # Example of monitored PV
-camonitor -S XF:08IDB-SE{RGA:1}:DataRawLine # Latest raw data line
-camonitor -S XF:08IDB-SE{RGA:1}:LastError # Checking for errors
+caput XF:08IDB-SE{RGA:1}:Acquire 1
 ```
 
-```powershell
-caproto-monitor 'XF:08IDB-SE{RGA:1}:Status' 'XF:08IDB-SE{RGA:1}:DataAge' 'XF:08IDB-SE{RGA:1}P:MID1-I' 'XF:08IDB-SE{RGA:1}:DataRawLine' 'XF:08IDB-SE{RGA:1}:LastError'
-```
-
-Expected:
-
-- `Status` transitions to `StartingActive` then `ScanningActive`.
-- `MID1-I` and other MID channels update continuously.
-- `DataAge` is low and changing (not `-1` once data is flowing).
-- `LastError` remains empty.
-
-## 4) Extended generic controls
-
-### Raw command path
+Stop publishing without closing the MASsoft experiment:
 
 ```bash
-caput -S XF:08IDB-SE{RGA:1}:RawCmd "-xFilename"
-caput XF:08IDB-SE{RGA:1}:RawSend 1
-caget -S XF:08IDB-SE{RGA:1}:RawResp
-caget -S XF:08IDB-SE{RGA:1}:ActiveFile
+caput XF:08IDB-SE{RGA:1}:Acquire 0
 ```
 
-```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:RawCmd' '-xFilename'
-caproto-put 'XF:08IDB-SE{RGA:1}:RawSend' 1
-caproto-get -S 'XF:08IDB-SE{RGA:1}:RawResp' 'XF:08IDB-SE{RGA:1}:ActiveFile'
-```
-
-### Generic `-x*` path
-
-```bash
-caput -S XF:08IDB-SE{RGA:1}:XName "Status"
-caput XF:08IDB-SE{RGA:1}:XSend 1
-caget -S XF:08IDB-SE{RGA:1}:XResp
-```
-
-```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:XName' 'Status'
-caproto-put 'XF:08IDB-SE{RGA:1}:XSend' 1
-caproto-get -S 'XF:08IDB-SE{RGA:1}:XResp'
-```
-
-### Generic one-shot `-l*` path
-
-```bash
-caput -S XF:08IDB-SE{RGA:1}:LItem "Data"
-caput XF:08IDB-SE{RGA:1}:LView 1
-caput XF:08IDB-SE{RGA:1}:LFetch 1
-caget -S XF:08IDB-SE{RGA:1}:LResp
-```
-
-```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:LItem' 'Data'
-caproto-put 'XF:08IDB-SE{RGA:1}:LView' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:LFetch' 1
-caproto-get -S 'XF:08IDB-SE{RGA:1}:LResp'
-```
-
-### Restart hot-links
-
-```bash
-caput XF:08IDB-SE{RGA:1}:RestartLinks 1
-```
-
-```powershell
-caproto-put 'XF:08IDB-SE{RGA:1}:RestartLinks' 1
-```
-
-## 5) Shutdown sequence
+Abort a running scan safely:
 
 ```bash
 caput XF:08IDB-SE{RGA:1}:Abort 1
-caput XF:08IDB-SE{RGA:1}:Close 1
-caget XF:08IDB-SE{RGA:1}:Connected
 caget -S XF:08IDB-SE{RGA:1}:Status
 ```
 
-```powershell
-caproto-put 'XF:08IDB-SE{RGA:1}:Abort' 1
-caproto-put 'XF:08IDB-SE{RGA:1}:Close' 1
-caproto-get 'XF:08IDB-SE{RGA:1}:Connected'
-caproto-get -S 'XF:08IDB-SE{RGA:1}:Status'
-```
-
-Expected:
-
-- `Connected` becomes `0`
-- `Status` becomes `Disconnected`
-
-## 6) Notes and common pitfalls
-
-- PV names in terminal commands use **single braces**: `XF:08IDB-SE{RGA:1}:...`
-- `OpenExp`, `Go`, `Abort`, `Close`, `RestartLinks`, `RawSend`, `XSend`, `LFetch`, `RefreshFile` are momentary command PVs and typically show `0 -> 0`.
-- `caproto-get -S` is for string decoding. For integer PVs (like `Connected`), use plain `caproto-get`.
-- If a `caproto-put` data value starts with `-`, add `--` before data:
-
-```powershell
-caproto-put -S 'XF:08IDB-SE{RGA:1}:XArgs' -- '-Odt'
-caproto-put -S 'XF:08IDB-SE{RGA:1}:LOpts' -- '-c1 -t0 -m0'
-```
+Close the experiment and disconnect sockets:
 
 ```bash
-caput -S XF:08IDB-SE{RGA:1}:RawCmd -- "-xFilename"
+caput XF:08IDB-SE{RGA:1}:Close 1
+caget XF:08IDB-SE{RGA:1}:Connected
 ```
+
+## Monitoring
+
+```bash
+camonitor -S XF:08IDB-SE{RGA:1}:Status
+camonitor XF:08IDB-SE{RGA:1}:DataAge
+camonitor XF:08IDB-SE{RGA:1}P:MID1-I
+camonitor XF:08IDB-SE{RGA:1}P:MID2-I
+camonitor -S XF:08IDB-SE{RGA:1}:LastError
+```
+
+## Implementation Notes
+
+`cap2.py` is the direct Caproto IOC. It defines PVs, handles user puts, and publishes the latest parsed MASsoft data into EPICS PVs.
+
+`massoft_client.py` is the MASsoft socket client. It follows the MASsoft TCP/IP rule that each command must receive its response before the next command is sent. It also uses dedicated sockets for hot-links, because a socket that has started `-lStatus` or `-lData` should only be read from after that point.
+
+The direct IOC lifecycle is:
+
+```text
+OpenExp -> Go -> Acquire=1 -> Abort if needed -> Close
+```
+
+`OpenExp` connects sockets, associates the experiment file, and reads legends for the mass PVs. `Acquire=1` starts status/data hot-links if they were not already started. `Abort` sends `-xAbort` and waits for a `Stopped*` status. `Close` stops IOC publishing first, then aborts if needed, sends `-xClose`, and marks the IOC disconnected.
+
+The direct option does not expose the `_aj2` generic commissioning PVs such as `RawCmd`, `XName`, `LItem`, `RestartLinks`, or `DataRawLine`.
