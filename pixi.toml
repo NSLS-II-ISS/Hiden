@@ -17,6 +17,7 @@ EPICS_CA_ADDR_LIST = "10.66.59.255"
 EPICS_CA_AUTO_ADDR_LIST = "NO"
 EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
 EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
+EPICS_CAS_INTF_ADDR_LIST = "10.66.59.30"
 
 [tasks]
 ioc = { cmd = "python cap2_aj2.py", cwd = "hiden", description = "Run the RGA IOC" }
