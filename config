@@ -1,0 +1,8 @@
+#
+# Ansible/procServ softIOC registration.
+# These values match the legacy Hiden IOC deployment on xf08idb-ioc2.
+#
+NAME=hiden
+USER=softioc-iss
+PORT=5110
+HOST=xf08idb-ioc2

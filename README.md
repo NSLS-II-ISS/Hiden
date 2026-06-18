@@ -40,6 +40,27 @@ cd /path/to/repo/Hiden
 pixi run ioc
 ```
 
+## Managed IOC Deployment
+
+The legacy Hiden IOC was integrated into the beamline IOC infrastructure with a root `st.cmd` plus a `config` file:
+
+```text
+NAME=hiden
+USER=softioc-iss
+PORT=5110
+HOST=xf08idb-ioc2
+```
+
+This repository now includes the same deployment shape. For Ansible/procServ, use the repository root `st.cmd` as the IOC startup script. It sets the EPICS Channel Access environment and then runs the pixi IOC.
+
+The important IOC-side setting is:
+
+```bash
+EPICS_CAS_INTF_ADDR_LIST=10.66.59.30
+```
+
+That forces caproto to advertise from the IOC2 EPICS interface.
+
 List PVs without starting normal operation:
 
 ```bash
