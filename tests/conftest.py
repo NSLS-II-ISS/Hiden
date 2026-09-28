@@ -16,7 +16,7 @@ class Handler(socketserver.StreamRequestHandler):
         associated = None
         try:
             time.sleep(sim.greeting_delay)
-            self.wfile.write(b"101\r\n")
+            self.wfile.write((sim.greeting + "\r\n").encode())
             while not sim.stopping.is_set():
                 line = self.rfile.readline()
                 if not line:
@@ -73,6 +73,7 @@ class Simulator(socketserver.ThreadingTCPServer):
         self.row = "00:00:00\t0\t" + "\t".join(str(i * 1e-10) for i in range(20))
         self.status = "ScanningActive"
         self.abort_fails = self.abort_stuck = False
+        self.greeting = "101"
         self.greeting_delay = 0
         self.stopping = threading.Event()
         self.drop_links = threading.Event()

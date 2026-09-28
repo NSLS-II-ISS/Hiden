@@ -122,9 +122,10 @@ class _CRLFSocket:
                 self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 if enable_keepalive:
                     self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-                # HA-085-109 requires a two/three digit greeting before commands.
+                # Read one numeric greeting before commands. HA-085-109 describes
+                # two/three digits, but deployed MASsoft also sends values like 3968.
                 greeting = self.read_line(timeout_s=self._timeout_s)
-                if not re.fullmatch(r"\d{2,3}", greeting.strip()):
+                if not re.fullmatch(r"[0-9]+", greeting.strip()):
                     raise MASsoftProtocolError(f"{self.name}: invalid greeting {greeting!r}")
             except Exception:
                 self.close()

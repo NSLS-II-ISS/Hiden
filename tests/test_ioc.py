@@ -75,6 +75,25 @@ def test_open_acquire_close_reopen_and_short_recipe(ioc, sim):
     asyncio.run(scenario())
 
 
+def test_acquire_after_reported_four_digit_greeting(ioc, sim):
+    # Actual MASsoft greeting from the IOC2 commissioning log.
+    sim.greeting = "3968"
+
+    async def scenario():
+        await ioc.experiment.write("2026-3-alba-rubio1.exp")
+        await ioc.open_exp.write(1)
+        assert ioc.connected.value == 1, ioc.last_error.value
+        assert ioc.last_error.value == ""
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 1, ioc.last_error.value
+        await publish_when_ready(ioc)
+        assert ioc.status.value == "ScanningActive"
+        assert ioc.mid20.value == pytest.approx(19e-10)
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
 def test_failure_resets_acquire_and_operator_can_recover(ioc, sim):
     async def scenario():
         await ioc.acquire.write(1)

@@ -42,7 +42,8 @@ Automated tests cover both variants using a loopback simulator, real local CA
 reads/write rejection, timeouts, framing, parser edge cases, 20-channel mapping,
 file changes, stale data, abort refusal, cancellation, and recovery. Static lint,
 format checks, shell syntax and Pixi lock consistency are also release gates.
-Local result: **63 tests passed** with Python 3.13.2/caproto 1.3.0 on Windows;
+Local result after the greeting correction below: **79 tests passed** with
+Python 3.13.2/caproto 1.3.0 on Windows;
 lint, format, Bash syntax, and Pixi lock checks passed. Linux execution and the
 locked Linux Python patch release remain deployment checks. The new CI workflow is
 provided, but its remote run cannot be claimed before it executes.
@@ -50,6 +51,21 @@ provided, but its remote run cannot be claimed before it executes.
 **Approved for controlled commissioning, not yet for unattended production.**
 Windows loopback tests do not establish Linux network behavior, hardware timing,
 detector units, or long-term Archiver reliability for this revised code.
+
+### Commissioning Greeting Correction
+
+IOC2 reported `MASsoftCommand: invalid greeting '3968'`. The initial release
+candidate restricted greetings to the two/three digits described by HA-085-109;
+the deployed MASsoft sends a longer numeric greeting. This prevented `OpenExp`
+from associating any file, so subsequent `Acquire` requests correctly stayed off.
+
+The corrected handshake accepts a nonempty ASCII decimal greeting without a
+fixed digit count. It still consumes exactly one CRLF record before commands,
+enforces the existing deadline/line-size limit, and closes malformed connections.
+Tests reproduce the reported failure in both IOC variants before the fix and
+verify successful OpenExp/Acquire afterward using a loopback simulator. Tests
+also cover two-, three-, four-, and five-digit greetings and malformed greetings.
+The corrected handshake still needs confirmation on the real MASsoft host.
 
 Before production sign-off, the beamline owner must complete:
 

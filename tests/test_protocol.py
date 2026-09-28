@@ -200,6 +200,25 @@ def test_greeting_is_consumed_even_if_delayed(client, sim):
     assert client.query_filename().endswith("first.exp")
 
 
+@pytest.mark.parametrize("greeting", ["10", "101", "3968", "10000"])
+def test_numeric_greeting_has_no_fixed_digit_count(client, sim, greeting):
+    sim.greeting = greeting
+    client.open_experiment("first.exp")
+    assert client.query_filename().endswith("first.exp")
+    assert client.x_status() == "ScanningActive"
+    assert len(client.fetch_legends()) == 20
+
+
+@pytest.mark.parametrize("greeting", ["", "ready", "101 junk"])
+def test_invalid_greeting_closes_socket_without_sending_commands(client, sim, greeting):
+    sim.greeting = greeting
+    with pytest.raises(MASsoftProtocolError, match="invalid greeting"):
+        client.open_experiment("first.exp")
+    assert not client.command.is_connected()
+    assert client.current_file is None
+    assert sim.commands == []
+
+
 def test_fragmented_crlf_and_absolute_read_deadline():
     left, right = socket.socketpair()
     transport = _CRLFSocket("127.0.0.1", 0, name="test", timeout_s=0.1)
