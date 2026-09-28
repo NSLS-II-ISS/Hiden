@@ -10,10 +10,11 @@ python = ">=3.10"
 caproto = "*"
 
 [activation.env]
-# EPICS Channel Access environment (from hiden_config.json epics section)
+# Server environment; keep in sync with the defaults in st.cmd.
 EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
 EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
-EPICS_CAS_INTF_ADDR_LIST = "10.66.59.30"
+# Receive broadcast searches on Linux. A specific host IP can miss them.
+EPICS_CAS_INTF_ADDR_LIST = "0.0.0.0"
 
 [tasks]
 ioc = { cmd = "python cap2_aj2.py", cwd = "hiden", description = "Run the RGA IOC" }

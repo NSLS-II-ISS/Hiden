@@ -96,6 +96,7 @@ export EPICS_CA_ADDR_LIST="10.66.59.255"
 export EPICS_CA_AUTO_ADDR_LIST="NO"
 export EPICS_CAS_AUTO_BEACON_ADDR_LIST="NO"
 export EPICS_CAS_BEACON_ADDR_LIST="10.66.59.255"
+export EPICS_CAS_INTF_ADDR_LIST="0.0.0.0"
 ```
 
 For PowerShell:
@@ -107,7 +108,10 @@ $env:EPICS_CA_ADDR_LIST = "10.66.59.255"
 $env:EPICS_CA_AUTO_ADDR_LIST = "NO"
 $env:EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
 $env:EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
+$env:EPICS_CAS_INTF_ADDR_LIST = "0.0.0.0"
 ```
+
+On Linux IOC2, binding caproto only to `10.66.59.30` prevented broadcast discovery. The wildcard binding receives broadcast searches and also exposes the CA server on INST; beacons remain directed to the EPICS subnet. Use broadcast searches (`EPICS_CA_ADDR_LIST=10.66.59.255`) from workstations because multiple IOCs share the host. See the root README's Archiver Discovery section for the verification procedure.
 
 ## Core PVs
 
