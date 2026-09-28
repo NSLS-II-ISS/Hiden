@@ -5,6 +5,12 @@ This repository keeps two runnable IOC options:
 - Direct Python option: `hiden/cap2.py` with `hiden/massoft_client.py`. See `hiden/README.md`.
 - Pixi option: `hiden/cap2_aj2.py` with `hiden/massoft_client_aj2.py`. This README documents that path.
 
+Release candidate: **1.0.0-rc.1**. See `RELEASE_REVIEW.md` for the review,
+behavior changes, and required hardware commissioning checks. This revision has
+automated simulator/loopback tests, not a completed production soak on the RGA.
+Both options share core protocol/lifecycle code; deploy the whole `hiden` directory,
+not just one pair of scripts. Run only one option at a time.
+
 ## Pixi IOC Option
 
 Use this option when running from the managed pixi environment on the IOC host.
@@ -37,10 +43,14 @@ Start the IOC on `xf08idb-ioc2` (run only one Hiden IOC, including any legacy ma
 
 ```bash
 cd /nsls2/auto-storage/iss/shared/config/repos/Hiden
+pixi install --locked
 bash st.cmd
 ```
 
-Leave the terminal open for this manual run. `pixi run ioc` is also supported and uses the same interface setting from `pixi.toml`.
+Leave the terminal open for this manual run. `pixi run --locked ioc` uses the same
+interface setting. The production entry point requires Pixi on PATH, or an
+absolute executable path in `PIXI_BIN`. It fails instead of silently launching a
+stale environment when Pixi is unavailable. Do not run `pixi update` on a deployed IOC.
 
 ## Managed IOC Deployment
 
@@ -78,6 +88,10 @@ pixi run python hiden/cap2_aj2.py --mas-host 10.66.58.227 --mas-port 5026
 ```
 
 ## Pixi Environment
+
+The runtime is locked to the Python 3.13 series and caproto 1.3.0. `pixi.lock`
+is tracked; `st.cmd` uses `--locked` so a manifest/lock mismatch fails explicitly.
+The lockfile targets Linux; Windows development tests use `requirements-dev.txt`.
 
 The EPICS Channel Access variables are set in `pixi.toml` under `[activation.env]`:
 
@@ -177,6 +191,28 @@ caput XF:08IDB-SE{RGA:1}:Acquire 1
 
 After restarting the IOC, repeat `ExpName`, `View`, `OpenExp`, and `Acquire`; these settings are not restored automatically. `Acquire=0` stops IOC publishing without requesting a MASsoft abort.
 
+For an already-running file with a full Windows path, use doubled backslashes
+with EPICS `caput -S` from Bash. Set `View` **before** `OpenExp`:
+
+```bash
+caput 'XF:08IDB-SE{RGA:1}:Acquire' 0
+caput -S 'XF:08IDB-SE{RGA:1}:ExpName' 'C:\\Users\\xf08id1\\Documents\\Hiden Analytical\\MASsoft\\11\\2026-3-alba-rubio1.exp'
+caput 'XF:08IDB-SE{RGA:1}:View' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:OpenExp' 1
+caget 'XF:08IDB-SE{RGA:1}:Connected'
+caget -S 'XF:08IDB-SE{RGA:1}:LastError'
+```
+
+Only after `Connected=1` and no error, enable publishing:
+
+```bash
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 1
+```
+
+`-c` waits for put completion; a momentary PV returning zero is not proof of
+hardware success. Inspect `LastError` after each operation. Do not issue `Go`
+for an already-running recipe.
+
 Abort or close safely:
 
 ```bash
@@ -203,6 +239,13 @@ camonitor -S XF:08IDB-SE{RGA:1}:LastError
 ```
 
 ## Extended `_aj2` Controls
+
+Commissioning PVs are retained but disabled by default. Temporarily set
+`ioc.enable_generic_commands` to JSON `true` and restart only if needed. Stop
+`Acquire` first. `RawSend` and `XSend` now allow **Status/Filename queries only**;
+use dedicated `Go`, `Abort`, and `Close` controls for hardware operations.
+`LFetch` uses a temporary dedicated socket. Reopen the experiment before returning
+to acquisition after commissioning. These controls are not an authentication mechanism.
 
 Raw command:
 
@@ -237,7 +280,8 @@ caput XF:08IDB-SE{RGA:1}:RestartLinks 1
 
 ## Implementation Notes
 
-`cap2_aj2.py` is the pixi production IOC wrapper. It exposes the PVs, keeps `OpenExp`, `Go`, `Abort`, and `Close` as momentary controls, uses `Acquire` as a persistent 0/1 publishing control, and adds diagnostic/generic command PVs for commissioning.
+`cap2_aj2.py` is the Pixi IOC wrapper. It inherits the tested core lifecycle from
+`cap2.py`, preserves compatibility PVs, and adds commissioning diagnostics.
 
 The pixi IOC publishes MID intensity and mass readbacks from `MID1` through `MID20`. Recipes with fewer MID channels leave the unused PVs at `0`.
 
@@ -250,3 +294,56 @@ OpenExp -> Go or RunExp -> Acquire=1 -> Abort/AbortExp if needed -> Close/CloseE
 ```
 
 `OpenExp` prepares the experiment and metadata. `Acquire=1` starts data publishing from hot-links. `Close` and `CloseExp` use safe abort/close sequencing and then disconnect local sockets because MASsoft drops file-associated sockets after `-xClose`.
+
+## Failure Recovery And Data Quality
+
+- A transport/parser/reader failure sets `Acquire=0`, `Connected=0`, `Status=Error`
+  and `LastError`, and invalidates the intensity PVs. Set the correct file/view,
+  run `OpenExp`, then `Acquire=1` to recover without restarting the IOC.
+- A command timeout has an unknown hardware outcome. Check MASsoft before
+  repeating a hardware command. The IOC does not replay commands or restart scans.
+- Paused or stale intensity readbacks carry an INVALID alarm. `DataAge` tracks
+  reception even while publishing is paused. The default stale threshold is
+  `ioc.stale_after_s=60`; set it above the longest expected MID cycle plus margin.
+  A silent stream produces a stale-data warning, not an automatic abort/reconnect.
+- MID views must contain 1..20 `mass <number>` legends. Missing, malformed,
+  nonfinite, or ambiguous cells fail visibly rather than shifting mass assignments.
+  Negative and zero readings are retained. Unsupported/custom legend formats
+  require an explicit parser extension and tests.
+- A snapshot gives all intensities in a row the same IOC receive timestamp.
+  `update_period_s` controls latest-row publication, not lossless delivery of every
+  instrument cycle. A recipe faster than this period can be downsampled.
+- Changing the selected view/data options requires `Acquire=0`. Opening a file
+  resets old channel values; unused channels are zero, not retained from the prior recipe.
+- Shutdown disconnects sockets without stopping the MASsoft scan. Only explicit
+  `Abort`/`Close` commands stop hardware. Allow in-flight commands to finish during
+  shutdown; do not use `kill -9` during a MASsoft command.
+
+CA controls have no authentication in this repository. Wildcard binding is needed
+for the verified Linux broadcast discovery, but also exposes control PVs on INST.
+Use beamline firewall/network access policy and a single managed instance. Do not
+expose this IOC to untrusted networks.
+
+`archiver-pvs.txt` lists all 40 mass/intensity PVs. Archive entries and the JSON
+`archiver` section do not automatically configure the Archiver service or conditional
+sampling. Alarm-aware consumers should also monitor `Acquire`, `Connected`, and
+`DataAge`. The earlier archive verification above predates this release candidate;
+repeat retrieval during commissioning.
+
+## Development Checks
+
+Use Python 3.13. From the repository root, create a virtual environment and install
+`requirements-dev.txt`, then run:
+
+```bash
+python -m pytest -q
+python -m ruff check hiden tests
+python -m ruff format --check hiden tests
+bash -n st.cmd
+pixi lock --check
+```
+
+The tests use a loopback MASsoft simulator and isolated CA ports/prefixes; they do
+not contact the real RGA. CI runs the tests on Windows and Linux. Logs, caches,
+IDE state, and local `hiden/scratch.py` notes are ignored. Historic source snapshots
+remain available in Git history, not as alternative executable files.

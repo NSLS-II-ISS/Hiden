@@ -12,7 +12,10 @@ Use the repository root `README.md` for the pixi option:
 
 ## When To Use This Option
 
-Use `cap2.py` when you want the smaller IOC implementation without pixi task management or the extended `_aj2` commissioning PVs.
+Use `cap2.py` when you want the core IOC without Pixi task management or the
+extended `_aj2` commissioning PVs. Both options share `massoft_protocol.py` and
+the core lifecycle; deploy the complete directory. Their PV names overlap, so
+never run both concurrently. See the root `RELEASE_REVIEW.md` for commissioning.
 
 This option still reads `hiden_config.json`, exposes the core Hiden RGA PVs, and uses MASsoft sockets through `massoft_client.py`.
 
@@ -63,6 +66,7 @@ ioc.default_experiment
 ioc.default_view
 ioc.update_period_s
 ioc.start_links_on_open_exp
+ioc.stale_after_s
 ```
 
 ## Start The IOC
@@ -70,13 +74,19 @@ ioc.start_links_on_open_exp
 From the repository root:
 
 ```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 python hiden/cap2.py
 ```
 
-List PVs:
+Set the IOC environment below before starting. On Windows use `python -m venv
+.venv` and `.\.venv\Scripts\Activate.ps1` instead. Runtime dependency: caproto 1.3.0.
+
+Log PVs while starting the server (this does not exit after listing):
 
 ```bash
-python hiden/cap2.py --list-pvs -q
+python hiden/cap2.py --list-pvs
 ```
 
 If you are using pixi only for dependencies, but still want the direct IOC code path:
@@ -161,6 +171,8 @@ caget -S XF:08IDB-SE{RGA:1}:LastError
 
 Start the MASsoft scan:
 
+Skip this step if the selected experiment is already running in MASsoft.
+
 ```bash
 caput XF:08IDB-SE{RGA:1}:Go 1
 ```
@@ -216,3 +228,10 @@ OpenExp -> Go -> Acquire=1 -> Abort if needed -> Close
 `OpenExp` connects sockets, associates the experiment file, and reads legends for the mass PVs. `Acquire=1` starts status/data hot-links if they were not already started. `Abort` sends `-xAbort` and waits for a `Stopped*` status. `Close` stops IOC publishing first, then aborts if needed, sends `-xClose`, and marks the IOC disconnected.
 
 The direct option does not expose the `_aj2` generic commissioning PVs such as `RawCmd`, `XName`, `LItem`, `RestartLinks`, or `DataRawLine`.
+
+Measurement/status readbacks are read-only. Paused or stale intensities carry an
+INVALID alarm; stale timeout defaults to 60 seconds and must exceed your cycle
+duration. Faults reset `Acquire` and require `OpenExp` then `Acquire=1`; commands
+are never replayed automatically. `Close` requires a freshly confirmed stopped
+state and will not follow a failed abort. Both variants have the same parser and
+socket safety tests. The root README covers recovery and Archiver validation.

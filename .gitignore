@@ -1,0 +1,12 @@
+.pixi/
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+hiden/scratch.py

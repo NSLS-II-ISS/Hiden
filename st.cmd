@@ -6,7 +6,7 @@
 # current pixi-based caproto IOC. Listen on all interfaces to receive broadcast
 # searches on Linux; direct-IP binding can exclude those searches.
 
-set -e
+set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${REPO_DIR}"
@@ -24,14 +24,11 @@ export EPICS_CAS_BEACON_ADDR_LIST="${EPICS_CAS_BEACON_ADDR_LIST:-10.66.59.255}"
 # This also exposes the server on INST; beacons remain on the EPICS subnet.
 export EPICS_CAS_INTF_ADDR_LIST="${EPICS_CAS_INTF_ADDR_LIST:-0.0.0.0}"
 
-if command -v pixi >/dev/null 2>&1; then
-    exec pixi run ioc
+PIXI_BIN="${PIXI_BIN:-pixi}"
+if command -v "${PIXI_BIN}" >/dev/null 2>&1; then
+    exec "${PIXI_BIN}" run --locked ioc
 fi
 
-if [ -x "${REPO_DIR}/.pixi/envs/default/bin/python" ]; then
-    exec "${REPO_DIR}/.pixi/envs/default/bin/python" hiden/cap2_aj2.py
-fi
-
-echo "ERROR: pixi was not found and .pixi/envs/default/bin/python is missing." >&2
-echo "Run 'pixi install' in ${REPO_DIR}, or make pixi available to softioc-iss." >&2
+echo "ERROR: pixi not found. Set PIXI_BIN to its absolute path or fix the service PATH." >&2
+echo "Install with 'pixi install --locked' in ${REPO_DIR} before deployment." >&2
 exit 1

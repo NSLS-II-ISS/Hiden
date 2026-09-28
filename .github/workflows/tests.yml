@@ -1,0 +1,22 @@
+name: IOC Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  simulated-ioc:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check hiden tests
+      - run: python -m ruff format --check hiden tests
+      - run: python -m pytest -q
+      - if: runner.os == 'Linux'
+        run: bash -n st.cmd

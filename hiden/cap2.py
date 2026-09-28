@@ -1,50 +1,56 @@
-"""
-Caproto IOC for Hiden RGA via MASsoft sockets (rewrite).
-
-Design goals:
-- Keep MASsoft sockets in a protocol-compliant state:
-  * one command socket, dedicated hot-link sockets for status and data 
-- Avoid thread leaks / stuck executor threads when scans are aborted.
-- Provide explicit PVs for Go/Abort/Close in addition to the data readbacks.
-
-This file is the stable fixed Caproto IOC.
-"""
+"""Direct asyncio IOC. Shared lifecycle for both supported launch options."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
-from typing import Optional
+from functools import wraps
 
-from caproto.server import PVGroup, pvproperty, ioc_arg_parser, run
+from caproto import AlarmSeverity, AlarmStatus
+from caproto.server import PVGroup, pvproperty, run, template_arg_parser
+from massoft_client import MASsoftClient, load_runtime_config
+from massoft_protocol import extract_masses
 
-from massoft_client import (
-    MASsoftClient,
-    MASsoftConfig,
-    MASsoftError,
-    MASsoftTimeout,
-    load_runtime_config,
-)
-
-if not logging.getLogger().handlers:
-    logging.basicConfig(level=logging.INFO)
-# Avoid duplicated caproto log lines (caproto already installs its own handlers).
-logging.getLogger("caproto").propagate = False
-logging.getLogger("caproto.ctx").propagate = False
 LOG = logging.getLogger(__name__)
-
-_RUNTIME_CFG = load_runtime_config()
-_IOC_CFG = _RUNTIME_CFG.get("ioc", {}) if isinstance(_RUNTIME_CFG, dict) else {}
-if not isinstance(_IOC_CFG, dict):
-    _IOC_CFG = {}
-
+_IOC_CFG = load_runtime_config().get("ioc", {})
 MAX_MIDS = 20
 
 
-def _ioc_default(name: str, default):
-    val = _IOC_CFG.get(name, default)
-    return default if val is None else val
+def _ioc_default(name, default):
+    return _IOC_CFG.get(name, default)
+
+
+async def worker(function, *args, **kwargs):
+    # Cancelling to_thread does not stop its thread. Finish an outstanding
+    # command before shutdown/reassociation is allowed to close its socket.
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            LOG.exception("Command failed while cancellation was pending")
+        raise
+
+
+def serialized(function):
+    @wraps(function)
+    async def put(self, instance, value):
+        async with self._operation_lock:
+            try:
+                return await function(self, instance, value)
+            except ValueError as exc:
+                await self._error_text(exc)
+                return instance.value
+            except Exception as exc:
+                LOG.exception("%s failed", function.__name__)
+                await self._fail(exc)
+                return 0
+
+    return put
 
 
 class RGAIOC(PVGroup):
@@ -56,7 +62,7 @@ class RGAIOC(PVGroup):
         name="XF:08IDB-SE{{RGA:1}}:OpenExp",
         value=0,
         dtype=int,
-        doc="Momentary: connect + open/associate the experiment + start status/data hot-links",
+        doc="Momentary: associate experiment and fetch MID metadata; does not start a scan.",
     )
 
     experiment = pvproperty(
@@ -107,14 +113,14 @@ class RGAIOC(PVGroup):
         name="XF:08IDB-SE{{RGA:1}}:Abort",
         value=0,
         dtype=int,
-        doc="Momentary: -xAbort and wait for Stopped* status (uses status link / poll fallback).",
+        doc="Momentary: -xAbort and wait for a fresh Stopped* command response.",
     )
 
     close = pvproperty(
         name="XF:08IDB-SE{{RGA:1}}:Close",
         value=0,
         dtype=int,
-        doc="Momentary: safe close (abort→wait for Stopped*→-xClose). MASsoft terminates all file-associated sockets.",
+        doc="Momentary: abort, wait for Stopped*, then close and disconnect.",
     )
 
     acquire = pvproperty(
@@ -125,6 +131,8 @@ class RGAIOC(PVGroup):
     )
 
     connected = pvproperty(
+        read_only=True,
+        alarm_group="connected",
         name="XF:08IDB-SE{{RGA:1}}:Connected",
         value=0,
         dtype=int,
@@ -132,6 +140,8 @@ class RGAIOC(PVGroup):
     )
 
     status = pvproperty(
+        read_only=True,
+        alarm_group="status",
         name="XF:08IDB-SE{{RGA:1}}:Status",
         value="Disconnected",
         dtype=str,
@@ -140,6 +150,8 @@ class RGAIOC(PVGroup):
     )
 
     last_error = pvproperty(
+        read_only=True,
+        alarm_group="last_error",
         name="XF:08IDB-SE{{RGA:1}}:LastError",
         value="",
         dtype=str,
@@ -148,6 +160,8 @@ class RGAIOC(PVGroup):
     )
 
     data_age = pvproperty(
+        read_only=True,
+        alarm_group="data_age",
         name="XF:08IDB-SE{{RGA:1}}:DataAge",
         value=-1.0,
         dtype=float,
@@ -155,12 +169,13 @@ class RGAIOC(PVGroup):
     )
 
     status_age = pvproperty(
+        read_only=True,
+        alarm_group="status_age",
         name="XF:08IDB-SE{{RGA:1}}:StatusAge",
         value=-1.0,
         dtype=float,
         doc="Seconds since the last status update was received from the MASsoft -lStatus hot-link. -1 means unknown.",
     )
-
 
     # ---------------------------------------------------------------------
     # MID-I readbacks (1-MAX_MIDS)
@@ -168,10 +183,13 @@ class RGAIOC(PVGroup):
 
     for idx in range(1, MAX_MIDS + 1):
         locals()[f"mid{idx}"] = pvproperty(
+            read_only=True,
+            alarm_group=f"mid{idx}",
             name=f"XF:08IDB-SE{{{{RGA:1}}}}P:MID{idx}-I",
             value=0.0,
             dtype=float,
             doc=f"RGA MID{idx} intensity",
+            precision=15,
         )
     del idx
 
@@ -181,225 +199,269 @@ class RGAIOC(PVGroup):
 
     for idx in range(1, MAX_MIDS + 1):
         locals()[f"mass{idx}"] = pvproperty(
+            read_only=True,
+            alarm_group=f"mass{idx}",
             name=f"XF:08IDB-VA{{{{RGA:1}}}}Mass:MID{idx}",
             value=0.0,
             dtype=float,
             doc=f"MID{idx} mass value",
+            precision=3,
         )
     del idx
 
     # ---------------------------------------------------------------------
     # IOC internals
     # ---------------------------------------------------------------------
+    client_class = MASsoftClient
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, mas_host=None, mas_port=None, **kwargs):
         super().__init__(*args, **kwargs)
-
-        cfg = MASsoftConfig.from_runtime_config()
-        self.client = MASsoftClient(cfg)
-
-        self._update_task: Optional[asyncio.Task] = None
-        self._updating = False
-        self._mass_vals: list[float] = []
+        self.client = self.client_class(host=mas_host, port=mas_port)
+        self._operation_lock = asyncio.Lock()
+        self._publishing = False
         self._links_started = False
-        self._last_pub_row_ts = 0.0
-        self._last_pub_status_ts = 0.0
-        self._update_period_s = max(0.05, float(_ioc_default("update_period_s", 1.0)))
-        self._default_view = max(1, int(_ioc_default("default_view", 1)))
-        self._default_experiment = str(_ioc_default("default_experiment", "file56.exp"))
-        self._start_links_on_open_exp = bool(int(_ioc_default("start_links_on_open_exp", 0)))
+        self._mass_vals = []
+        self._last_pub_row_ts = self._last_pub_status_ts = 0.0
+        self._data_valid = False
+        self._stream_started_at = 0.0
+        self._update_period_s = float(_ioc_default("update_period_s", 1.0))
+        self._stale_after_s = float(_ioc_default("stale_after_s", 60.0))
+        if not math.isfinite(self._update_period_s) or self._update_period_s < 0.05:
+            raise ValueError("update_period_s must be finite and >= 0.05")
+        if not math.isfinite(self._stale_after_s) or self._stale_after_s <= 0:
+            raise ValueError("stale_after_s must be positive and finite")
 
-    # ---------------------------------------------------------------------
-    # PV put handlers
-    # ---------------------------------------------------------------------
+    async def _error_text(self, exc):
+        await self.last_error.write(str(exc)[:255])
+
+    async def _invalidate(self):
+        self._data_valid = False
+        for i in range(1, MAX_MIDS + 1):
+            pv = getattr(self, f"mid{i}")
+            await pv.write(pv.value, status=AlarmStatus.COMM, severity=AlarmSeverity.INVALID_ALARM)
+
+    async def _fail(self, exc):
+        self._publishing = False
+        self._links_started = False
+        await self.acquire.write(0, verify_value=False)
+        await self.connected.write(0)
+        await self.status.write("Error")
+        if hasattr(self, "active_file"):
+            await self.active_file.write("")
+        await self._error_text(exc)
+        await self._invalidate()
+        # A fresh OpenExp is the only reconnection path; never replay Go/Abort.
+        await worker(self.client.disconnect)
+
+    async def _metadata(self):
+        legends = await worker(self.client.fetch_legends, view=int(self.view.value))
+        self._mass_vals = extract_masses(legends)
+        for i in range(1, MAX_MIDS + 1):
+            value = self._mass_vals[i - 1] if i <= len(self._mass_vals) else 0.0
+            await getattr(self, f"mass{i}").write(value)
+
+    async def _reset_readbacks(self):
+        self._last_pub_row_ts = self._last_pub_status_ts = 0.0
+        for i in range(1, MAX_MIDS + 1):
+            await getattr(self, f"mass{i}").write(0.0)
+            await getattr(self, f"mid{i}").write(
+                0.0, status=AlarmStatus.UDF, severity=AlarmSeverity.INVALID_ALARM
+            )
+        self._data_valid = False
+        await self.data_age.write(-1.0)
+        await self.status_age.write(-1.0)
+        if hasattr(self, "data_raw_line"):
+            await self.data_raw_line.write("")
+            await self.data_raw_age.write(-1.0)
 
     @open_exp.putter
+    @serialized
     async def open_exp(self, instance, value):
         if not int(value):
-            return value
-
-        fname = (self.experiment.value or "").strip() or self._default_experiment
-        view = max(1, int(self.view.value or self._default_view))
-
-        LOG.info("Open/associate experiment %s (view=%d)", fname, view)
-
-        try:
-            await asyncio.to_thread(self.client.connect)
-            await asyncio.to_thread(self.client.open_experiment, fname)
-
-            # Fetch legends once to populate mass PVs (non-listening temp socket).
-            legends = await asyncio.to_thread(self.client.fetch_legends, view=view)
-            masses: list[float] = []
-            for item in legends:
-                if "mass" in item.lower():
-                    try:
-                        masses.append(float(item.split()[-1]))
-                    except Exception:
-                        continue
-            self._mass_vals = masses[:MAX_MIDS]
-
-            for idx, m in enumerate(self._mass_vals, start=1):
-                await getattr(self, f"mass{idx}").write(m)
-
-            # Optional eager startup; default is lazy (start on Acquire=1).
-            if self._start_links_on_open_exp and not self._links_started:
-                await asyncio.to_thread(self.client.start_status_link, view=view)
-                await asyncio.to_thread(self.client.start_data_link, view=view, mid_cycles=1, include_time=False, include_ms=False)
-                self._links_started = True
-
-            await self.connected.write(1)
-            await self.status.write(self.client.get_latest_status() or "Connected")
-
-        except Exception as exc:
-            LOG.exception("OpenExp failed")
-            await self.connected.write(0)
-            await self.status.write("Error")
-            await self.last_error.write(repr(exc))
-
-        # Momentary action: reset PV to 0
+            return 0
+        filename = str(self.experiment.value).strip()
+        self.client._resolve_path(filename)  # Validate before disturbing the current association.
+        self._publishing = False
+        self._links_started = False
+        await self.acquire.write(0, verify_value=False)
+        await self.connected.write(0)
+        await self.status.write("Opening")
+        await self._reset_readbacks()
+        await worker(self.client.open_experiment, filename)
+        await self._metadata()
+        if hasattr(self, "active_file"):
+            await self.active_file.write(self.client.current_file)
+        await self.connected.write(1)
+        await self.status.write("Connected")
+        await self.last_error.write("")
+        if int(_ioc_default("start_links_on_open_exp", 0)):
+            await self._start_links()
         return 0
 
-    @go.putter
-    async def go(self, instance, value):
-        if not int(value):
-            return value
+    async def _start_links(self):
+        if not self.client.current_file:
+            raise RuntimeError("Set ExpName/View and OpenExp before Acquire")
+        if self._links_started:
+            self.client.check_links()
+            return
+        # Refetch metadata on each new stream, including after View changes.
+        await self._metadata()
+        await worker(self.client.start_status_link, view=int(self.view.value))
+        options = {}
+        if hasattr(self, "data_cycles"):
+            options = dict(
+                mid_cycles=int(self.data_cycles.value),
+                include_time=bool(self.data_time_fmt.value),
+                include_ms=bool(self.data_ms_fmt.value),
+            )
+        await worker(self.client.start_data_link, view=int(self.view.value), **options)
+        self._links_started = True
+        self._stream_started_at = time.monotonic()
 
-        try:
-            od = bool(int(self.go_od.value))
-            ot = bool(int(self.go_ot.value))
-            fn = (self.go_filename.value or "").strip() or None
-            await asyncio.to_thread(self.client.x_go, filename=fn, od=od, ot=ot)
-        except Exception as exc:
-            LOG.exception("Go failed")
-            await self.last_error.write(repr(exc))
+    @acquire.putter
+    @serialized
+    async def acquire(self, instance, value):
+        if int(value) not in (0, 1):
+            raise ValueError("Acquire must be 0 or 1")
+        if int(value):
+            await self._start_links()
+            self._publishing = True
+            await self.last_error.write("")
+        else:
+            self._publishing = False
+            await self._invalidate()
+        return int(value)
+
+    async def _go(self):
+        await worker(
+            self.client.x_go,
+            filename=str(self.go_filename.value).strip() or None,
+            od=bool(self.go_od.value),
+            ot=bool(self.go_ot.value),
+        )
+        if hasattr(self, "active_file"):
+            await self.active_file.write(self.client.current_file)
+
+    @go.putter
+    @serialized
+    async def go(self, instance, value):
+        if int(value):
+            await self._go()
         return 0
 
     @abort.putter
+    @serialized
     async def abort(self, instance, value):
-        if not int(value):
-            return value
-
-        try:
-            final = await asyncio.to_thread(self.client.safe_abort_and_wait, timeout_s=30.0)
-            await self.status.write(final)
-        except MASsoftTimeout as exc:
-            await self.last_error.write(repr(exc))
-        except Exception as exc:
-            LOG.exception("Abort failed")
-            await self.last_error.write(repr(exc))
+        if int(value):
+            await self.status.write(await worker(self.client.safe_abort_and_wait))
         return 0
+
+    async def _close(self):
+        self._publishing = False
+        await self.acquire.write(0, verify_value=False)
+        await self._invalidate()
+        await worker(self.client.safe_abort_and_close)
+        self._links_started = False
+        await self.connected.write(0)
+        await self.status.write("Disconnected")
+        if hasattr(self, "active_file"):
+            await self.active_file.write("")
 
     @close.putter
+    @serialized
     async def close(self, instance, value):
-        if not int(value):
-            return value
-
-        try:
-            # Stop PV updates first to avoid races on stale data.
-            await self._stop_update_task()
-
-            # Safe sequencing: if the MSIU is running, abort and wait for Stopped* before closing.
-            # After -xClose, MASsoft terminates all file-associated sockets (manual behavior).
-            await asyncio.to_thread(self.client.safe_abort_and_close, abort_timeout_s=30.0, reconnect=False)
-
-            self._links_started = False
-            await self.connected.write(0)
-            await self.status.write("Disconnected")
-
-        except Exception as exc:
-            LOG.exception("Close failed")
-            await self.last_error.write(repr(exc))
+        if int(value):
+            await self._close()
         return 0
 
-    @acquire.putter
-    async def acquire(self, instance, value):
-        want = bool(int(value))
+    @view.putter
+    async def view(self, instance, value):
+        async with self._operation_lock:
+            if int(value) < 1:
+                raise ValueError("View must be positive")
+            if int(value) != int(instance.value):
+                if self._publishing:
+                    raise ValueError("Set Acquire=0 before changing View")
+                await worker(self.client.stop_links)
+                self._links_started = False
+                self.client._reset_cache()
+                await self._reset_readbacks()
+            return int(value)
 
-        if want and not self._updating:
-            if not self._links_started:
-                view = max(1, int(self.view.value or self._default_view))
-                await asyncio.to_thread(self.client.start_status_link, view=view)
-                await asyncio.to_thread(
-                    self.client.start_data_link,
-                    view=view,
-                    mid_cycles=1,
-                    include_time=False,
-                    include_ms=False,
-                )
-                self._links_started = True
-            self._updating = True
-            self._update_task = asyncio.create_task(self._pv_update_loop())
-
-        elif not want and self._updating:
-            self._updating = False
-            await self._stop_update_task()
-
-        return value
-
-    # ---------------------------------------------------------------------
-    # Internal helpers
-    # ---------------------------------------------------------------------
-
-    async def _stop_update_task(self) -> None:
-        t = self._update_task
-        self._update_task = None
-        if t is None:
+    async def _publish_once(self):
+        if self._links_started:
+            self.client.check_links()
+        sample = self.client.snapshot()
+        now = time.monotonic()
+        age = now - sample["row_ts"] if sample["row_ts"] else -1.0
+        await self.data_age.write(age)
+        await self.status_age.write(now - sample["status_ts"] if sample["status_ts"] else -1.0)
+        if sample["status_ts"] > self._last_pub_status_ts:
+            await self.status.write(sample["status"][:31])
+            self._last_pub_status_ts = sample["status_ts"]
+        if hasattr(self, "data_raw_age"):
+            await self.data_raw_age.write(age)
+        if not self._publishing:
             return
-        t.cancel()
-        try:
-            await t
-        except asyncio.CancelledError:
-            pass
+        if age > self._stale_after_s or (
+            age < 0 and now - self._stream_started_at > self._stale_after_s
+        ):
+            if self._data_valid:
+                await self._invalidate()
+            await self.last_error.write("Data stale; check MASsoft scan and DataAge")
+            return
+        if sample["row_ts"] > self._last_pub_row_ts:
+            row = sample["row"]
+            if len(row) != len(self._mass_vals):
+                raise RuntimeError("Data/legend channel count changed; OpenExp again")
+            for i in range(1, MAX_MIDS + 1):
+                value = row[i - 1] if i <= len(row) else 0.0
+                await getattr(self, f"mid{i}").write(
+                    value,
+                    timestamp=sample["row_wall_ts"],
+                    status=AlarmStatus.NO_ALARM,
+                    severity=AlarmSeverity.NO_ALARM,
+                )
+            if hasattr(self, "data_raw_line"):
+                await self.data_raw_line.write(
+                    sample["raw"][:4095], timestamp=sample["row_wall_ts"]
+                )
+            self._last_pub_row_ts = sample["row_ts"]
+            self._data_valid = True
+            await self.last_error.write("")
 
-    async def _pv_update_loop(self) -> None:
-        """
-        Update PVs at 1 Hz from the latest hot-link values.
+    @status.startup
+    async def status(self, instance, async_lib):
+        async with self._operation_lock:
+            await self._reset_readbacks()
+        while True:
+            async with self._operation_lock:
+                try:
+                    await self._publish_once()
+                except Exception as exc:
+                    LOG.exception("Publisher failed")
+                    await self._fail(exc)
+            await asyncio.sleep(self._update_period_s)
 
-        This loop does not perform socket I/O. Sockets are drained by background hot-link threads.
-        """
-        try:
-            while self._updating:
-                now = time.monotonic()
+    @connected.shutdown
+    async def connected(self, instance, async_lib):
+        async with self._operation_lock:
+            self._publishing = False
+            await worker(self.client.disconnect)
 
-                st = self.client.get_latest_status()
-                st_ts = self.client.get_latest_status_timestamp()
-                if st and st_ts > self._last_pub_status_ts:
-                    await self.status.write(st)
-                    self._last_pub_status_ts = st_ts
-                if st_ts > 0:
-                    await self.status_age.write(max(0.0, now - st_ts))
-                else:
-                    await self.status_age.write(-1.0)
 
-                row_ts = self.client.get_latest_row_timestamp()
-                row = self.client.get_latest_row()
-                if row and row_ts > self._last_pub_row_ts:
-                    row_values = row[:MAX_MIDS]
-                    for idx in range(1, MAX_MIDS + 1):
-                        val = row_values[idx - 1] if idx <= len(row_values) else 0.0
-                        await getattr(self, f"mid{idx}").write(val)
-                    self._last_pub_row_ts = row_ts
-
-                if row_ts > 0:
-                    await self.data_age.write(max(0.0, now - row_ts))
-                else:
-                    await self.data_age.write(-1.0)
-
-                err = self.client.get_last_error()
-                if err:
-                    await self.last_error.write(err)
-
-                await asyncio.sleep(self._update_period_s)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            LOG.exception("PV update loop error")
-            await self.last_error.write(repr(exc))
-            await self.status.write("Error")
+def main(ioc_class=RGAIOC):
+    parser, split = template_arg_parser(
+        desc="Hiden RGA MASsoft IOC", default_prefix="", supported_async_libs=["asyncio"]
+    )
+    parser.add_argument("--mas-host", help="Override MASsoft INST host")
+    parser.add_argument("--mas-port", type=int, help="Override MASsoft port (normally 5026)")
+    args = parser.parse_args()
+    ioc_options, run_options = split(args)
+    logging.basicConfig(level=logging.INFO)
+    ioc = ioc_class(**ioc_options, mas_host=args.mas_host, mas_port=args.mas_port)
+    run(ioc.pvdb, **run_options)
 
 
 if __name__ == "__main__":
-    ioc_opts, run_opts = ioc_arg_parser(default_prefix="", desc="Hiden RGA MASsoft IOC (fixed)")
-    ioc = RGAIOC(**ioc_opts)
-    run(ioc.pvdb, **run_opts)
+    main()
