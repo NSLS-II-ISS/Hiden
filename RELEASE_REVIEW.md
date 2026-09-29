@@ -42,7 +42,7 @@ Automated tests cover both variants using a loopback simulator, real local CA
 reads/write rejection, timeouts, framing, parser edge cases, 20-channel mapping,
 file changes, stale data, abort refusal, cancellation, and recovery. Static lint,
 format checks, shell syntax and Pixi lock consistency are also release gates.
-Local result after the greeting correction below: **79 tests passed** with
+Local result after the commissioning corrections below: **97 tests passed** with
 Python 3.13.2/caproto 1.3.0 on Windows;
 lint, format, Bash syntax, and Pixi lock checks passed. Linux execution and the
 locked Linux Python patch release remain deployment checks. The new CI workflow is
@@ -66,6 +66,23 @@ Tests reproduce the reported failure in both IOC variants before the fix and
 verify successful OpenExp/Acquire afterward using a loopback simulator. Tests
 also cover two-, three-, four-, and five-digit greetings and malformed greetings.
 The corrected handshake still needs confirmation on the real MASsoft host.
+
+### Commissioning Legend Correction
+
+The next IOC2 log confirms the greeting was accepted and all three core sockets
+connected. OpenExp then failed on `Unsupported MID legend 'Elapsed time'`.
+Retained historical MASsoft output establishes the complete variant:
+`Elapsed time`, `Time (ms)`, then `Scan 1 : mass 18.00`, and subsequent species.
+The initial strict parser supported only bare `mass <number>` legends.
+
+The parser now accepts that recorded format as well as bare mass labels. It
+excludes only the recognized leading time headers, keeps species in response
+order, and still rejects unknown, empty, duplicated/misplaced time columns and
+more than 20 masses. One-shot data reads also count mass channels rather than
+all legend cells. Regression tests cover both clients and IOCs, the recorded
+format, the four-digit greeting, and MID mapping (including zero/negative values
+and the seventh-channel signal). No magnitude-based filtering or data-cell
+skipping was introduced. Confirm the corrected mapping on the real instrument.
 
 Before production sign-off, the beamline owner must complete:
 

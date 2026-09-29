@@ -94,6 +94,33 @@ def test_acquire_after_reported_four_digit_greeting(ioc, sim):
     asyncio.run(scenario())
 
 
+def test_acquire_with_time_headers_and_scan_mass_legends(ioc, sim):
+    sim.greeting = "3968"
+    masses = [2, 15, 18, 28, 31, 32, 40, 44]
+    sim.legends = ["Elapsed time", "Time (ms)"] + [
+        f"Scan {i} : mass {mass:.2f}" for i, mass in enumerate(masses, 1)
+    ]
+    values = [0, -1.075e-10, 0, 3.225e-10, 6.45e-15, 0, 5.4825e-9, 8.0625e-14]
+    sim.row = "00:06:51\t411758\t" + "\t".join(map(str, values))
+
+    async def scenario():
+        await ioc.open_exp.write(1)
+        assert ioc.connected.value == 1, ioc.last_error.value
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 1, ioc.last_error.value
+        await publish_when_ready(ioc)
+        for i, (mass, intensity) in enumerate(zip(masses, values), 1):
+            assert getattr(ioc, f"mass{i}").value == mass
+            assert getattr(ioc, f"mid{i}").value == intensity
+        for i in range(len(masses) + 1, 21):
+            assert getattr(ioc, f"mass{i}").value == 0
+            assert getattr(ioc, f"mid{i}").value == 0
+        if hasattr(ioc, "data_raw_line"):
+            assert ioc.data_raw_line.value == sim.row
+
+    asyncio.run(scenario())
+
+
 def test_failure_resets_acquire_and_operator_can_recover(ioc, sim):
     async def scenario():
         await ioc.acquire.write(1)

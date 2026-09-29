@@ -61,6 +61,74 @@ def test_single_zero_and_legends():
 
 
 @pytest.mark.parametrize(
+    "time_legends", [[], ["Elapsed time"], ["Time (ms)"], ["Elapsed time", "Time (ms)"]]
+)
+def test_scan_legends_ignore_only_leading_time_metadata(time_legends):
+    # Keep wire order, not the numeric Scan ID order.
+    legends = time_legends + ["Scan 7 : mass 40.00", "Scan 2 : mass 2.00"]
+    assert extract_masses(legends) == [40.0, 2.0]
+
+
+def test_quoted_historical_legends_and_twenty_mass_limit():
+    raw = '"Elapsed time"\t"Time (ms)"\t"Scan 1 : mass 18.00"\t"Scan 2 : mass 28.00"'
+    assert extract_masses(parse_legends(raw)) == [18.0, 28.0]
+    full = ["Elapsed time", "Time (ms)"] + [f"Scan {i} : mass {i}.00" for i in range(1, 21)]
+    assert extract_masses(full) == list(range(1, 21))
+    with pytest.raises(MASsoftProtocolError):
+        extract_masses(full + ["Scan 21 : mass 21.00"])
+
+
+@pytest.mark.parametrize(
+    "legends",
+    [
+        ["Elapsed time", "Time (ms)"],
+        ["Elapsed time", "Elapsed time", "mass 2"],
+        ["Time (ms)", "Elapsed time", "mass 2"],
+        ["mass 2", "Time (ms)", "mass 40"],
+        ["mass 2", "Elapsed time"],
+        ["Elapsed time", "Pressure", "mass 2"],
+        ["Elapsed time", "Time (ms)", "", "mass 2"],
+        ["Scan 1 : unknown 2", "mass 40"],
+    ],
+)
+def test_unknown_or_misplaced_legends_still_fail(legends):
+    with pytest.raises(MASsoftProtocolError):
+        extract_masses(legends)
+
+
+def test_historical_legends_match_stream_values(client, sim):
+    sim.legends = ["Elapsed time", "Time (ms)"] + [
+        f"Scan {i} : mass {mass:.2f}" for i, mass in enumerate([18, 28, 32, 40, 44], 1)
+    ]
+    sim.row = "00:00:18\t18521\t0\t-1.075e-10\t2.15e-10\t5.6e-9\t0"
+    client.open_experiment("first.exp")
+    assert client.fetch_legends() == sim.legends
+    client.start_status_link()
+    client.start_data_link()
+    wait_for(lambda: client.get_latest_row() is not None)
+    assert client.get_latest_row() == [0, -1.075e-10, 2.15e-10, 5.6e-9, 0]
+    assert client.get_latest_raw_line() == sim.row
+    client.check_links()
+
+
+def test_extended_one_shot_data_counts_masses_not_time_headers(sim):
+    from massoft_client_aj2 import MASsoftClient
+
+    sim.legends = ["Elapsed time", "Time (ms)", "Scan 1 : mass 2.00", "Scan 2 : mass 40.00"]
+    sim.row = "00:00:00\t0\t0\t5.6e-9"
+    obj = MASsoftClient(
+        MASsoftConfig(
+            host="127.0.0.1", port=sim.server_address[1], retry_s=0, command_timeout_s=0.8
+        )
+    )
+    try:
+        obj.open_experiment("first.exp")
+        assert obj.fetch_data_once() == [0.0, 5.6e-9]
+    finally:
+        obj.disconnect()
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"port": 0},

@@ -306,7 +306,10 @@ OpenExp -> Go or RunExp -> Acquire=1 -> Abort/AbortExp if needed -> Close/CloseE
   reception even while publishing is paused. The default stale threshold is
   `ioc.stale_after_s=60`; set it above the longest expected MID cycle plus margin.
   A silent stream produces a stale-data warning, not an automatic abort/reconnect.
-- MID views must contain 1..20 `mass <number>` legends. Missing, malformed,
+- MID views must contain 1..20 species legends, either `mass <number>` or
+  `Scan <index> : mass <number>`. Optional leading `Elapsed time` and `Time (ms)`
+  headers describe time metadata, not extra MID channels. Masses retain their
+  response-column order, regardless of the scan indices. Missing, malformed,
   nonfinite, or ambiguous cells fail visibly rather than shifting mass assignments.
   Negative and zero readings are retained. Unsupported/custom legend formats
   require an explicit parser extension and tests.

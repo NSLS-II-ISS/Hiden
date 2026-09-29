@@ -15,6 +15,7 @@ from massoft_protocol import (
     MASsoftProtocolError,
     MASsoftTimeout,
     _CRLFSocket,
+    extract_masses,
     get_runtime_config_path,
     load_runtime_config,
     parse_legends,
@@ -304,7 +305,7 @@ class MASsoftClient(CoreClient):
         return self.l_call_once("Status", view=view)
 
     def fetch_data_once(self, *, view=1, cycles=1, include_time=False, include_ms=False):
-        count = len(self.fetch_legends(view=view))
+        count = len(extract_masses(self.fetch_legends(view=view)))
         options = [f"-c{int(cycles)}", f"-t{int(include_time)}", f"-m{int(include_ms)}"]
         line = self.l_call_once("Data", view=view, options=options)
         return self.parse_numeric_row(

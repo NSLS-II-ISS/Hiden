@@ -266,9 +266,20 @@ def parse_legends(line):
 
 
 def extract_masses(legends):
+    labels = [legend.strip() for legend in legends]
+    start = 0
+    # MASsoft can prepend these time columns to its legends response. Only
+    # consume the known leading prefix; never discard arbitrary/interleaved cells.
+    for time_label in ("elapsed time", "time (ms)"):
+        if start < len(labels) and " ".join(labels[start].split()).casefold() == time_label:
+            start += 1
     masses = []
-    for legend in legends:
-        match = re.fullmatch(r"mass\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))", legend, re.I)
+    for legend in labels[start:]:
+        match = re.fullmatch(
+            r"(?:scan\s+[0-9]+\s*:\s*)?mass\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
+            legend,
+            re.IGNORECASE,
+        )
         if match is None:
             raise MASsoftProtocolError(
                 f"Unsupported MID legend {legend!r}; column order cannot be established"
