@@ -10,3 +10,6 @@ build/
 dist/
 *.egg-info/
 hiden/scratch.py
+# Local commissioning evidence is preserved, not shipped with the IOC.
+/analysis/
+/rga-comparison-*.json

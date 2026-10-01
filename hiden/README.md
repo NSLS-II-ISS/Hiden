@@ -1,237 +1,137 @@
-# Direct Python IOC
+# Unified IOC: Direct Python
 
-This README documents the direct Python option:
+`cap3.py` is the single IOC implementation, with `massoft_client.py` and
+`massoft_protocol.py`. Direct Python and Pixi expose the same 78 PVs, including
+20 mass/intensity pairs and the previously extended diagnostics. The old IOC
+entry points and `_aj2` client module have been removed. Use `massoft_client.py`
+(with an underscore, not a space) for Python imports.
 
-- `cap2.py`
-- `massoft_client.py`
+For IOC2's Pixi/managed launcher, workstation access, operating commands and
+Archiver retrieval, see the [root README](../README.md). Deploy this whole
+`hiden` directory, not an isolated script. Run exactly one Hiden IOC.
 
-Use the repository root `README.md` for the pixi option:
+**Release candidate, not unattended-production approval:** new MASsoft data
+links can replay historical rows with current IOC receipt timestamps. Neither
+`DataAge` nor the now-synchronized VM clock proves source freshness. Read the
+[release review](../RELEASE_REVIEW.md) before deployment.
 
-- `cap2_aj2.py`
-- `massoft_client_aj2.py`
+## Direct Python Setup
 
-## When To Use This Option
-
-Use `cap2.py` when you want the core IOC without Pixi task management or the
-extended `_aj2` commissioning PVs. Both options share `massoft_protocol.py` and
-the core lifecycle; deploy the complete directory. Their PV names overlap, so
-never run both concurrently. See the root `RELEASE_REVIEW.md` for commissioning.
-
-This option still reads `hiden_config.json`, exposes the core Hiden RGA PVs, and uses MASsoft sockets through `massoft_client.py`.
-
-Network topology:
-
-```text
-IOC server INST:       10.66.58.30
-IOC server EPICS:      10.66.59.30
-MASsoft Windows INST:  10.66.58.227:5026
-MASsoft Windows EPICS: 10.66.59.227
-EPICS broadcast:       10.66.59.255
-```
-
-The IOC talks to MASsoft on the INST subnet at `10.66.58.227:5026`. Caproto publishes PVs on the EPICS subnet and sends beacons to `10.66.59.255`.
-
-## Runtime Config
-
-Default config file:
-
-```bash
-hiden/hiden_config.json
-```
-
-Override it with:
-
-```bash
-export HIDEN_CONFIG=/path/to/hiden_config.json
-```
-
-PowerShell:
-
-```powershell
-$env:HIDEN_CONFIG = "C:\path\to\hiden_config.json"
-```
-
-Important config keys:
-
-```text
-massoft.host
-massoft.port
-massoft.experiment_directory
-massoft.retry_s
-massoft.command_timeout_s
-massoft.link_chunk_timeout_s
-massoft.link_burst_gap_s
-massoft.enable_keepalive
-ioc.default_experiment
-ioc.default_view
-ioc.update_period_s
-ioc.start_links_on_open_exp
-ioc.stale_after_s
-```
-
-## Start The IOC
-
-From the repository root:
+From the repository root, using Python 3.13:
 
 ```bash
 python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python hiden/cap2.py
 ```
 
-Set the IOC environment below before starting. On Windows use `python -m venv
-.venv` and `.\.venv\Scripts\Activate.ps1` instead. Runtime dependency: caproto 1.3.0.
-
-Log PVs while starting the server (this does not exit after listing):
+Set the IOC environment on **IOC2**, then launch:
 
 ```bash
-python hiden/cap2.py --list-pvs
+export EPICS_CA_SERVER_PORT=5064
+export EPICS_CA_REPEATER_PORT=5065
+export EPICS_CA_ADDR_LIST=10.66.59.255
+export EPICS_CA_AUTO_ADDR_LIST=NO
+export EPICS_CAS_AUTO_BEACON_ADDR_LIST=NO
+export EPICS_CAS_BEACON_ADDR_LIST=10.66.59.255
+export EPICS_CAS_INTF_ADDR_LIST=0.0.0.0
+python hiden/cap3.py
 ```
 
-If you are using pixi only for dependencies, but still want the direct IOC code path:
+MASsoft remains at `10.66.58.227:5026` on INST. CA searches use UDP 5064;
+beacons go to `10.66.59.255`. Do not change the MASsoft port to 5064.
+Binding to all interfaces preserves the broadcast discovery verified on IOC2,
+but exposes controls on INST as well. Follow beamline network access policy.
+Workstation clients need only CA search settings, not the IOC's `EPICS_CAS_*`.
+
+Useful launch options (from the repository root):
 
 ```bash
-pixi run python hiden/cap2.py
+python hiden/cap3.py --help
+python hiden/cap3.py --list-pvs
+python hiden/cap3.py --mas-host 10.66.58.227 --mas-port 5026
 ```
 
-## EPICS Environment
+`--list-pvs` also starts the server; it is not a dry-run option. Do not run it
+alongside another instance. Pixi is an alternative environment for the very same
+code: `pixi run --locked python hiden/cap3.py`. The recommended IOC2 launcher is
+`bash st.cmd`, which supplies the EPICS defaults automatically.
 
-For bash on the IOC host:
+For Windows development, create the environment with `py -3.13 -m venv .venv`
+and use `.\.venv\Scripts\python.exe` directly. Set any required variables with
+PowerShell's `$env:NAME = 'value'`. Do not launch a second beamline PV server
+from the Windows VM or workstation while the IOC2 instance is running.
+
+## Configuration
+
+Defaults are read from `hiden_config.json` beside the modules, independent of the
+current directory. To select a different file before launch:
 
 ```bash
-export EPICS_CA_SERVER_PORT="5064"
-export EPICS_CA_REPEATER_PORT="5065"
-export EPICS_CA_ADDR_LIST="10.66.59.255"
-export EPICS_CA_AUTO_ADDR_LIST="NO"
-export EPICS_CAS_AUTO_BEACON_ADDR_LIST="NO"
-export EPICS_CAS_BEACON_ADDR_LIST="10.66.59.255"
-export EPICS_CAS_INTF_ADDR_LIST="0.0.0.0"
+export HIDEN_CONFIG=/path/to/hiden_config.json
 ```
-
-For PowerShell:
 
 ```powershell
-$env:EPICS_CA_SERVER_PORT = "5064"
-$env:EPICS_CA_REPEATER_PORT = "5065"
-$env:EPICS_CA_ADDR_LIST = "10.66.59.255"
-$env:EPICS_CA_AUTO_ADDR_LIST = "NO"
-$env:EPICS_CAS_AUTO_BEACON_ADDR_LIST = "NO"
-$env:EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
-$env:EPICS_CAS_INTF_ADDR_LIST = "0.0.0.0"
+$env:HIDEN_CONFIG = 'C:\path\to\hiden_config.json'
 ```
 
-On Linux IOC2, binding caproto only to `10.66.59.30` prevented broadcast discovery. The wildcard binding receives broadcast searches and also exposes the CA server on INST; beacons remain directed to the EPICS subnet. Use broadcast searches (`EPICS_CA_ADDR_LIST=10.66.59.255`) from workstations because multiple IOCs share the host. See the root README's Archiver Discovery section for the verification procedure.
+Important keys:
 
-## Core PVs
+- `massoft.host`, `massoft.port`, `massoft.experiment_directory`: MASsoft endpoint/path.
+- `massoft.retry_s`, `massoft.command_timeout_s`: server wait option and bounded client timeout.
+- `massoft.link_chunk_timeout_s`, `massoft.link_burst_gap_s`: stream read timing.
+- `ioc.default_experiment`, `ioc.default_view`: initial file/view selection, not automatic connection.
+- `ioc.update_period_s`: latest-row publication interval, not guaranteed per-cycle delivery.
+- `ioc.stale_after_s`: receipt silence threshold; set above the longest normal cycle.
+- `ioc.start_links_on_open_exp`: normally zero; opening a link may replay history.
+- `ioc.default_data_cycles`, `ioc.default_data_time_fmt`, `ioc.default_data_ms_fmt`: link options.
+- `ioc.enable_generic_commands`: defaults to false; leave off during normal operation.
 
-Experiment and scan controls:
+The JSON `epics`/`archiver` sections do not configure OS environment or the
+Archiver service. See [MASsoft VM clock setup](../README.md#massoft-vm-clock)
+for the guarded NTP helper and the verified NSLS-II sources. Clock changes do
+not repair existing archived timestamps or the data-link replay issue.
 
-```text
-XF:08IDB-SE{RGA:1}:ExpName
-XF:08IDB-SE{RGA:1}:View
-XF:08IDB-SE{RGA:1}:OpenExp
-XF:08IDB-SE{RGA:1}:Go
-XF:08IDB-SE{RGA:1}:Abort
-XF:08IDB-SE{RGA:1}:Close
-XF:08IDB-SE{RGA:1}:Acquire
-```
+## Implementation
 
-Diagnostics:
+`cap3.RGAIOC` owns PV definitions, readback publication and one asynchronous
+operation lock. All potentially blocking MASsoft operations run in a worker;
+shutdown waits for an in-flight command rather than closing its socket midway.
 
-```text
-XF:08IDB-SE{RGA:1}:Connected
-XF:08IDB-SE{RGA:1}:Status
-XF:08IDB-SE{RGA:1}:LastError
-XF:08IDB-SE{RGA:1}:DataAge
-XF:08IDB-SE{RGA:1}:StatusAge
-```
+`massoft_client.MASsoftClient` owns one command socket and separate status/data
+hot-links, plus temporary diagnostic sockets. `massoft_protocol` supplies CRLF
+framing, bounded reads, numeric greetings and strict legend/row parsing. A
+hot-link socket cannot subsequently receive commands without reconnection.
+Commands with uncertain outcomes are never replayed automatically.
 
-Data readbacks:
+The client retains the prior public diagnostic/compatibility methods, but not a
+second implementation. Python clients must serialize lifecycle calls themselves;
+the IOC's operation lock provides that serialization for PV operations.
 
-```text
-XF:08IDB-SE{RGA:1}P:MID1-I ... XF:08IDB-SE{RGA:1}P:MID20-I
-XF:08IDB-VA{RGA:1}Mass:MID1 ... XF:08IDB-VA{RGA:1}Mass:MID20
-```
+## Controls And Data
 
-If a MASsoft recipe exposes fewer than 20 MID channels, the unused readbacks remain `0`.
+All control PVs use `XF:08IDB-SE{RGA:1}:` followed by their suffix:
 
-## Operating Sequence
+- `ExpName`, `View`, `OpenExp`: associate a file and load ordered mass legends.
+- `Go` / `RunExp`: explicitly start a scan; skip for an already-running recipe.
+- `Acquire`: enable/disable publication, not the MASsoft experiment.
+- `Abort` / `AbortExp`: abort and require a fresh stopped response.
+- `Close` / `CloseExp`: stop if needed, close the file and disconnect.
+- `Connected`, `Status`, `LastError`, `ActiveFile`: state/error diagnostics.
+- `DataAge`, `StatusAge`, `DataRawLine`, `DataRawAge`: receipt/stream diagnostics.
+- `DataCycles`, `DataTimeFmt`, `DataMsFmt`, `RestartLinks`: data-link configuration.
 
-Open the experiment:
+Intensity names are `XF:08IDB-SE{RGA:1}P:MID1-I` through `P:MID20-I`;
+mass labels are `XF:08IDB-VA{RGA:1}Mass:MID1` through `Mass:MID20`.
+The [Archiver list](../archiver-pvs.txt) contains all 40 names. No renaming or
+re-creation of existing archive entries is needed for this consolidation.
 
-```bash
-caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp"
-caput XF:08IDB-SE{RGA:1}:View 1
-caput XF:08IDB-SE{RGA:1}:OpenExp 1
-caget XF:08IDB-SE{RGA:1}:Connected
-caget -S XF:08IDB-SE{RGA:1}:Status
-caget -S XF:08IDB-SE{RGA:1}:LastError
-```
+Readbacks are read-only. Unused channels are zero. Paused/stale intensities are
+INVALID. A transport/parser failure clears Acquire and requires explicit
+OpenExp/Acquire recovery. After an IOC restart, set ExpName and View again;
+there is no automatic resumption or scan start. Use `caput -c -w 120` for
+lifecycle puts, and inspect LastError: put completion is not hardware success.
 
-Start the MASsoft scan:
-
-Skip this step if the selected experiment is already running in MASsoft.
-
-```bash
-caput XF:08IDB-SE{RGA:1}:Go 1
-```
-
-Start publishing IOC data from MASsoft hot-links:
-
-```bash
-caput XF:08IDB-SE{RGA:1}:Acquire 1
-```
-
-Stop publishing without closing the MASsoft experiment:
-
-```bash
-caput XF:08IDB-SE{RGA:1}:Acquire 0
-```
-
-Abort a running scan safely:
-
-```bash
-caput XF:08IDB-SE{RGA:1}:Abort 1
-caget -S XF:08IDB-SE{RGA:1}:Status
-```
-
-Close the experiment and disconnect sockets:
-
-```bash
-caput XF:08IDB-SE{RGA:1}:Close 1
-caget XF:08IDB-SE{RGA:1}:Connected
-```
-
-## Monitoring
-
-```bash
-camonitor -S XF:08IDB-SE{RGA:1}:Status
-camonitor XF:08IDB-SE{RGA:1}:DataAge
-camonitor XF:08IDB-SE{RGA:1}P:MID1-I
-camonitor XF:08IDB-SE{RGA:1}P:MID2-I
-camonitor -S XF:08IDB-SE{RGA:1}:LastError
-```
-
-## Implementation Notes
-
-`cap2.py` is the direct Caproto IOC. It defines PVs, handles user puts, and publishes the latest parsed MASsoft data into EPICS PVs.
-
-`massoft_client.py` is the MASsoft socket client. It follows the MASsoft TCP/IP rule that each command must receive its response before the next command is sent. It also uses dedicated sockets for hot-links, because a socket that has started `-lStatus` or `-lData` should only be read from after that point.
-
-The direct IOC lifecycle is:
-
-```text
-OpenExp -> Go -> Acquire=1 -> Abort if needed -> Close
-```
-
-`OpenExp` connects sockets, associates the experiment file, and reads legends for the mass PVs. `Acquire=1` starts status/data hot-links if they were not already started. `Abort` sends `-xAbort` and waits for a `Stopped*` status. `Close` stops IOC publishing first, then aborts if needed, sends `-xClose`, and marks the IOC disconnected.
-
-The direct option does not expose the `_aj2` generic commissioning PVs such as `RawCmd`, `XName`, `LItem`, `RestartLinks`, or `DataRawLine`.
-
-Measurement/status readbacks are read-only. Paused or stale intensities carry an
-INVALID alarm; stale timeout defaults to 60 seconds and must exceed your cycle
-duration. Faults reset `Acquire` and require `OpenExp` then `Acquire=1`; commands
-are never replayed automatically. `Close` requires a freshly confirmed stopped
-state and will not follow a failed abort. Both variants have the same parser and
-socket safety tests. The root README covers recovery and Archiver validation.
+Changing View/data options requires Acquire=0 and can open a new replaying
+stream. Acquire=0 by itself leaves healthy links draining and does not abort
+the experiment. See the root README for complete copy-and-paste sequences.

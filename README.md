@@ -1,15 +1,39 @@
 # Hiden RGA IOC
 
-This repository keeps two runnable IOC options:
+One IOC, two ways to launch it: **`hiden/cap3.py`** uses
+**`hiden/massoft_client.py`**, either through Pixi on IOC2 or directly with Python.
+Direct-Python setup and implementation notes are in `hiden/README.md`.
 
-- Direct Python option: `hiden/cap2.py` with `hiden/massoft_client.py`. See `hiden/README.md`.
-- Pixi option: `hiden/cap2_aj2.py` with `hiden/massoft_client_aj2.py`. This README documents that path.
+Release candidate: **1.0.0-rc.2**. This consolidates the implementations; it is
+**not yet approved for unattended production**. A newly opened MASsoft data link
+can replay old measurements which the IOC timestamps at receipt. A small
+`DataAge` therefore does not prove current measurement data. Resolve and validate
+this before production sign-off; clock synchronization alone does not fix it.
+See `RELEASE_REVIEW.md` for the outstanding gates.
 
-Release candidate: **1.0.0-rc.1**. See `RELEASE_REVIEW.md` for the review,
-behavior changes, and required hardware commissioning checks. This revision has
-automated simulator/loopback tests, not a completed production soak on the RGA.
-Both options share core protocol/lifecycle code; deploy the whole `hiden` directory,
-not just one pair of scripts. Run only one option at a time.
+## Project Layout And Migration
+
+- `hiden/cap3.py`: all 78 PVs, 20 MID/mass pairs, serialized lifecycle and publication.
+- `hiden/massoft_client.py`: unified command, status, data and diagnostic client API.
+- `hiden/massoft_protocol.py`: shared configuration, CRLF transport and strict parsing.
+- `hiden/hiden_config.json`: MASsoft target and IOC defaults.
+- `st.cmd`, `config`, `pixi.toml`, `pixi.lock`: IOC2 launch and managed deployment inputs.
+- `archiver-pvs.txt`: the unchanged 40 mass/intensity PV names.
+- `scripts/configure-massoft-time.ps1`: guarded VM NTP configuration/verification.
+- `tests/`: loopback, CA, pre-consolidation contract and mocked time-helper tests.
+
+The obsolete `cap2.py`, `cap2_aj2.py`, and `massoft_client_aj2.py` files are removed,
+not kept as parallel implementations or wrappers. Update custom launch commands
+to `cap3.py` and imports to `massoft_client`. Pixi and `st.cmd` use the new entry
+point automatically. All former extended PVs are available in direct Python too;
+commissioning commands remain disabled by default. Existing PV names, defaults,
+types and access permissions are unchanged from the extended IOC.
+
+Deploy the complete `hiden` directory. Stop the previous Hiden IOC before starting
+the new one; do not run duplicate PV servers. Historical code remains in Git.
+Local `analysis/` reports and `rga-comparison-*.json` exports are preserved and
+ignored, not release inputs. Do not use `git clean -fdx`: it would delete these
+diagnostics as well as local environments and logs.
 
 ## Pixi IOC Option
 
@@ -30,7 +54,7 @@ The IOC talks to MASsoft on the INST subnet at `10.66.58.227:5026`. Caproto list
 The pixi task in `pixi.toml` runs:
 
 ```bash
-python cap2_aj2.py
+python cap3.py
 ```
 
 with working directory:
@@ -78,13 +102,13 @@ This allows broadcast discovery on Linux. Binding only to `10.66.59.30` prevente
 Log PV names while starting the server:
 
 ```bash
-pixi run python hiden/cap2_aj2.py --list-pvs
+pixi run --locked python hiden/cap3.py --list-pvs
 ```
 
 Override the MASsoft target if needed:
 
 ```bash
-pixi run python hiden/cap2_aj2.py --mas-host 10.66.58.227 --mas-port 5026
+pixi run --locked python hiden/cap3.py --mas-host 10.66.58.227 --mas-port 5026
 ```
 
 ## Pixi Environment
@@ -115,6 +139,72 @@ To use a different config:
 export HIDEN_CONFIG=/path/to/hiden_config.json
 pixi run ioc
 ```
+
+## MASsoft VM Clock
+
+The MASsoft VM `XF08ID-WS7` is a workgroup Windows machine. Configure Windows
+Time against the approved beamline NTP servers, not an SSH copy of IOC2's clock:
+`time1.nsls2.bnl.gov`, `time2.nsls2.bnl.gov`, and `time3.nsls2.bnl.gov`.
+Use all three explicit peers in Windows; the support note's `pool` directive is
+for chrony, not PowerShell. Do not use accelerator or SDCC fallback servers here.
+
+Open **PowerShell as Administrator on the MASsoft VM**, and run the helper from
+this repository's root. It requires Windows PowerShell 5.1 or PowerShell 7 and
+does not require Pixi. The default operation only reports configuration/status
+and takes five NTP offset samples; it does not change the clock or service:
+
+```powershell
+.\scripts\configure-massoft-time.ps1
+```
+
+For initial setup or a deliberate repair, first stop the MASsoft experiment
+and set the IOC's `Acquire=0`. `Acquire=0` alone does not stop the instrument.
+Preview the changes, then apply them only when ready for a possible clock jump:
+
+```powershell
+.\scripts\configure-massoft-time.ps1 -Apply -ExperimentStopped -WhatIf
+.\scripts\configure-massoft-time.ps1 -Apply -ExperimentStopped
+```
+
+`-ExperimentStopped` is the operator's acknowledgement, not an automatic check
+of the RGA. The helper refuses another hostname, a non-elevated session, and
+application on a domain-joined machine. It prints the previous configuration,
+sets W32Time startup to Automatic, installs the three NTP peers in client mode
+(`0x8`), restarts W32Time, and requests resynchronization. Service/native-command
+failures stop the operation; changes already applied are not automatically
+rolled back. It does not change the time zone, VMware providers, firewall,
+IOC, or Archiver settings, and does not start/stop MASsoft or issue EPICS writes.
+Follow site policy if PowerShell script execution is restricted.
+
+Review the output rather than treating a successful command as proof of accuracy:
+
+- Source must be an approved beamline server, not `Free-running System Clock`.
+- Leap indicator must no longer be `3 (not synchronized)`, and the last
+  successful synchronization time must be recent.
+- Aim for an absolute offset below one second before the next data comparison.
+  Recheck after 10-15 minutes and after the next planned reboot.
+- If a resync fails, preserve its error output and have support check DNS and
+  UDP 123 connectivity. Stripchart and the Windows Time service use different
+  source-port behavior, so stripchart alone does not prove service connectivity.
+- If drift returns, ask the VM administrators to check VMware host/guest time
+  synchronization as well; do not blindly disable time providers.
+
+See [Microsoft's Windows Time tools reference](https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings).
+
+On 2026-10-01 the operator applied this NTP configuration on `XF08ID-WS7` and
+reported `time1.nsls2.bnl.gov,0x8`, leap indicator 0, stratum 2, a successful
+sync at 12:56:13 EDT, and five offset samples of +3.3940 to +3.5440 milliseconds.
+This verifies that short interval, not long-term stability. The output also
+included root dispersion 7.7627936 seconds and `PeerPoll Interval: 17 (out of
+valid range)`; retain those diagnostics for follow-up if they persist. Do not
+treat root dispersion as the measured clock offset or tune polling solely from
+that peer diagnostic.
+
+Time synchronization does not repair previously archived timestamps or the
+separate startup/reconnection history replay. The IOC still timestamps rows
+when received, and `DataAge` measures receipt freshness, not measurement age.
+Neither this helper nor a clock correction makes the IOC a lossless archive of
+every historical MASsoft cycle. Keep the original experiment exports for comparison.
 
 ## Workstation Access
 
@@ -171,8 +261,8 @@ Open the experiment template:
 
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp"
-caput XF:08IDB-SE{RGA:1}:View 1
-caput XF:08IDB-SE{RGA:1}:OpenExp 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:View' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:OpenExp' 1
 caget XF:08IDB-SE{RGA:1}:Connected
 caget -S XF:08IDB-SE{RGA:1}:Status
 ```
@@ -180,13 +270,13 @@ caget -S XF:08IDB-SE{RGA:1}:Status
 If the experiment is stopped and you intend to start a scan:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:Go 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Go' 1
 ```
 
 If MASsoft is already running the selected experiment, skip `Go`. Enable IOC data publishing with:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:Acquire 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 1
 ```
 
 After restarting the IOC, repeat `ExpName`, `View`, `OpenExp`, and `Acquire`; these settings are not restored automatically. `Acquire=0` stops IOC publishing without requesting a MASsoft abort.
@@ -195,9 +285,9 @@ For an already-running file with a full Windows path, use doubled backslashes
 with EPICS `caput -S` from Bash. Set `View` **before** `OpenExp`:
 
 ```bash
-caput 'XF:08IDB-SE{RGA:1}:Acquire' 0
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 0
 caput -S 'XF:08IDB-SE{RGA:1}:ExpName' 'C:\\Users\\xf08id1\\Documents\\Hiden Analytical\\MASsoft\\11\\2026-3-alba-rubio1.exp'
-caput 'XF:08IDB-SE{RGA:1}:View' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:View' 1
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:OpenExp' 1
 caget 'XF:08IDB-SE{RGA:1}:Connected'
 caget -S 'XF:08IDB-SE{RGA:1}:LastError'
@@ -216,16 +306,16 @@ for an already-running recipe.
 Abort or close safely:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:Abort 1
-caput XF:08IDB-SE{RGA:1}:Close 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Abort' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Close' 1
 ```
 
-The `_aj2` IOC also keeps backward-compatible controls:
+The unified IOC also keeps backward-compatible PV controls:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:RunExp 1
-caput XF:08IDB-SE{RGA:1}:AbortExp 1
-caput XF:08IDB-SE{RGA:1}:CloseExp 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:RunExp' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:AbortExp' 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:CloseExp' 1
 ```
 
 Monitor useful readbacks:
@@ -238,7 +328,7 @@ camonitor -S XF:08IDB-SE{RGA:1}:DataRawLine
 camonitor -S XF:08IDB-SE{RGA:1}:LastError
 ```
 
-## Extended `_aj2` Controls
+## Commissioning Controls
 
 Commissioning PVs are retained but disabled by default. Temporarily set
 `ioc.enable_generic_commands` to JSON `true` and restart only if needed. Stop
@@ -251,7 +341,7 @@ Raw command:
 
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:RawCmd -- "-xFilename"
-caput XF:08IDB-SE{RGA:1}:RawSend 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:RawSend' 1
 caget -S XF:08IDB-SE{RGA:1}:RawResp
 ```
 
@@ -259,7 +349,7 @@ Generic `-x*` command:
 
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:XName "Status"
-caput XF:08IDB-SE{RGA:1}:XSend 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:XSend' 1
 caget -S XF:08IDB-SE{RGA:1}:XResp
 ```
 
@@ -268,24 +358,25 @@ Generic one-shot `-l*` command:
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:LItem "Data"
 caput XF:08IDB-SE{RGA:1}:LView 1
-caput XF:08IDB-SE{RGA:1}:LFetch 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:LFetch' 1
 caget -S XF:08IDB-SE{RGA:1}:LResp
 ```
 
 Restart status/data hot-links:
 
 ```bash
-caput XF:08IDB-SE{RGA:1}:RestartLinks 1
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:RestartLinks' 1
 ```
 
 ## Implementation Notes
 
-`cap2_aj2.py` is the Pixi IOC wrapper. It inherits the tested core lifecycle from
-`cap2.py`, preserves compatibility PVs, and adds commissioning diagnostics.
+`cap3.py` contains the single `RGAIOC` class: lifecycle, all PV definitions,
+compatibility controls and commissioning diagnostics. Pixi and direct Python
+execute exactly the same implementation; neither depends on an old entry point.
 
 The pixi IOC publishes MID intensity and mass readbacks from `MID1` through `MID20`. Recipes with fewer MID channels leave the unused PVs at `0`.
 
-`massoft_client_aj2.py` owns the MASsoft protocol work. It uses one command socket plus dedicated status and data hot-link sockets. A socket that has entered hot-link mode is not reused for normal commands; the client reconnects link sockets before restarting links. This avoids leaving MASsoft in a mixed command/listen state after aborts, restarts, or file changes.
+`massoft_client.py` owns the MASsoft client lifecycle and diagnostic API. It uses one command socket plus dedicated status and data hot-link sockets. A socket that has entered hot-link mode is not reused for normal commands; the client reconnects link sockets before restarting links. This avoids leaving MASsoft in a mixed command/listen state after aborts, restarts, or file changes.
 
 The intended lifecycle is:
 
@@ -297,6 +388,12 @@ OpenExp -> Go or RunExp -> Acquire=1 -> Abort/AbortExp if needed -> Close/CloseE
 
 ## Failure Recovery And Data Quality
 
+- **Unresolved history replay:** a new data link can start at the beginning of
+  an existing experiment. Received historical rows get current receipt timestamps
+  and can enter Archiver as apparently live samples. Starting/restarting links,
+  reopening a file, or restarting the IOC must be followed by source-row validation.
+  `DataAge`/`DataRawAge` measure receipt age only, not source age. This release does
+  not add an undocumented seek option or claim to solve replay.
 - A transport/parser/reader failure sets `Acquire=0`, `Connected=0`, `Status=Error`
   and `LastError`, and invalidates the intensity PVs. Set the correct file/view,
   run `OpenExp`, then `Acquire=1` to recover without restarting the IOC.
@@ -350,3 +447,8 @@ The tests use a loopback MASsoft simulator and isolated CA ports/prefixes; they 
 not contact the real RGA. CI runs the tests on Windows and Linux. Logs, caches,
 IDE state, and local `hiden/scratch.py` notes are ignored. Historic source snapshots
 remain available in Git history, not as alternative executable files.
+
+Windows tests also syntax-check the time helper and mock its service/NTP calls;
+they never change the host clock or contact time servers. Runtime cases are
+skipped for shells whose execution policy disallows the unsigned script; tests
+do not weaken that policy. PowerShell 5.1 and 7 are checked when available.

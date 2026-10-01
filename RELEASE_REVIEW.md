@@ -1,9 +1,51 @@
-# Release Review: 1.0.0-rc.1
+# Release Review: 1.0.0-rc.2
 
-Review date: 2026-09-28. Scope: both IOC entry points, both client APIs, runtime
-configuration, startup, dependency lock, repository artifacts, and deployment docs.
-Protocol checked against the supplied Hiden MASsoft Sockets manual HA-085-109,
-especially sections 1.2, 2.1.1, 2.1.3, and 3.2. No real RGA commands were issued.
+Consolidation review date: 2026-10-01. Scope: the unified IOC/client, launch
+configuration, retained PV/API contracts, cleanup and deployment documentation.
+The initial 2026-09-28 safety review checked the supplied Hiden MASsoft Sockets
+manual HA-085-109, especially sections 1.2, 2.1.1, 2.1.3, and 3.2. This refactor
+does not introduce new MASsoft commands. Tests issued no real RGA commands.
+
+## Production Blockers
+
+**Not approved for unattended production.** Consolidation and successful
+Archiver connectivity are not evidence of measurement freshness.
+
+1. A newly opened MASsoft data link can replay an experiment from the beginning.
+   The IOC assigns receipt timestamps, so historical values can be archived as
+   apparently current measurements. `DataAge` and `DataRawAge` measure receipt
+   age only. File reassociation, link restarts and IOC restarts need source-time
+   validation; no documented seek/latest operation is implemented here.
+2. The client retains the latest received row, not a lossless cycle queue.
+   Bursts or recipes faster than the publication interval can lose intervening
+   rows. This does not meet a guarantee to archive every instrument cycle.
+3. The unified version still needs deployment testing and a representative
+   hardware/Archiver soak on IOC2. Local Windows tests cannot establish Linux
+   broadcast behavior, hardware response timing, or long-term archival continuity.
+
+The VM NTP correction was reported successful on 2026-10-01 (about 3.4-3.5 ms
+offset in the supplied samples). It does not fix replay or rewrite existing
+archive timestamps. Do not hide this limitation by filtering negative values,
+guessing a constant clock offset, or marking a connected stream as source-fresh.
+
+## Consolidation
+
+- `hiden/cap3.py` is the only IOC implementation for direct Python and Pixi.
+- `hiden/massoft_client.py` includes the former extended client API; transport
+  and parsing remain in `massoft_protocol.py`.
+- `cap2.py`, `cap2_aj2.py`, and `massoft_client_aj2.py` are deleted as requested,
+  not maintained as wrappers. Custom launchers/imports must be updated.
+- All 78 extended IOC PVs and the 54 public client attributes were captured from
+  pre-refactor commit `915284b` in `tests/fixtures/legacy_contract.json`.
+  Regression tests enforce names, types, default values, lengths, precision and
+  read-only settings; all 40 Archiver PV names remain unchanged.
+- Old-source duplicate parametrizations were replaced with unified tests.
+  Added tests check launch configuration, CLI help, combined hot-link cleanup,
+  data-option changes and raw/value timestamp consistency.
+- Measurement exports and local analysis are retained in place and ignored,
+  rather than deleted or included in the runtime release. The guarded NTP
+  helper and its mocked tests are included; they do not change machine clocks
+  during testing.
 
 ## Findings Resolved
 
@@ -24,10 +66,10 @@ especially sections 1.2, 2.1.1, 2.1.3, and 3.2. No real RGA commands were issued
 
 ## Compatibility
 
-Both `cap2.py`/`massoft_client.py` and `cap2_aj2.py`/`massoft_client_aj2.py` remain
-runnable. All existing 20-channel mass/intensity and control PV names remain.
-Common framing/configuration lives in `massoft_protocol.py`; the extended option
-inherits the core client/IOC rather than duplicating safety logic.
+Use `cap3.py`/`massoft_client.py`; old entry points and the `_aj2` import no longer
+exist. All existing 20-channel mass/intensity and control PV names remain.
+Direct Python now exposes the diagnostics previously available only in the
+extended IOC. Generic commissioning operations are still disabled by default.
 
 Intentional changes: readbacks reject external writes; faulted Acquire returns to
 zero; invalid/stale measurements carry alarms; generic RawSend/XSend no longer
@@ -38,13 +80,17 @@ has been added. MID values remain as reported by MASsoft.
 
 ## Validation And Approval
 
-Automated tests cover both variants using a loopback simulator, real local CA
+Automated tests cover the unified implementation using a loopback simulator, real local CA
 reads/write rejection, timeouts, framing, parser edge cases, 20-channel mapping,
 file changes, stale data, abort refusal, cancellation, and recovery. Static lint,
 format checks, shell syntax and Pixi lock consistency are also release gates.
-Local result after the commissioning corrections below: **97 tests passed** with
-Python 3.13.2/caproto 1.3.0 on Windows;
-lint, format, Bash syntax, and Pixi lock checks passed. Linux execution and the
+Local consolidation result: **95 tests passed, 15 skipped** with
+Python 3.13.2/caproto 1.3.0 on Windows. The skips are Windows PowerShell 5.1
+runtime cases blocked by its Restricted execution policy; both available
+PowerShell parsers were checked and PowerShell 7 mock cases ran. Tests do not
+bypass script policy. Lint, format, Bash syntax, and Pixi lock checks passed.
+Removing duplicate old-variant parametrizations reduces the test count without
+removing the underlying scenarios. Linux execution and the
 locked Linux Python patch release remain deployment checks. The new CI workflow is
 provided, but its remote run cannot be claimed before it executes.
 
@@ -65,7 +111,8 @@ enforces the existing deadline/line-size limit, and closes malformed connections
 Tests reproduce the reported failure in both IOC variants before the fix and
 verify successful OpenExp/Acquire afterward using a loopback simulator. Tests
 also cover two-, three-, four-, and five-digit greetings and malformed greetings.
-The corrected handshake still needs confirmation on the real MASsoft host.
+The operator subsequently reported successful OpenExp/Acquire on the real
+MASsoft host. Repeat that check for this consolidated release.
 
 ### Commissioning Legend Correction
 
@@ -92,7 +139,9 @@ Before production sign-off, the beamline owner must complete:
    `bash st.cmd`. Check EPICS broadcast discovery from a workstation and services.
 3. Associate an already-running recipe without Go. Compare legends and values
    against MASsoft for every active channel, including channels 11..20. Test a
-   shorter recipe and verify unused slots reset to zero.
+   shorter recipe and verify unused slots reset to zero. Identify the source
+   row/time, not merely the matching IOC/Archiver receive timestamp; resolve the
+   replay blocker above before declaring live-data validation complete.
 4. Exercise Acquire pause/resume and file reassociation. In a maintenance window
    approved by the experiment owner, test Abort/Close and interrupted connectivity.
    Verify fresh OpenExp recovers and that no unintended scan starts/stops occur.
@@ -105,8 +154,10 @@ Before production sign-off, the beamline owner must complete:
 8. Confirm managed service PATH/PIXI_BIN, shutdown grace, network restrictions,
    and restart policy with controls staff. Shell exports do not configure services.
 
-Recovery/rollback: stop this IOC (not the running MASsoft scan), deploy the previous
-known-good commit `c71971d` in a separate checkout, install its environment, and
-start exactly one IOC. Reassociate the correct file and Acquire; do not restore
-Go automatically. The earlier commit predates the safety fixes above. Preserve
-archived entries and all local configuration/measurement files when rolling back.
+Recovery/rollback: record the deployed commit and back up site configuration
+before updating. If needed, stop this IOC (not the running MASsoft scan), restore
+the previously site-validated revision in a separate checkout, install its locked
+environment, and start exactly one IOC. Reassociate the file without automatic
+Go. The pre-consolidation checkpoint is `915284b`, not a claim of production
+approval or a replay fix. Preserve archived entries and all local configuration
+and measurement files when rolling back.

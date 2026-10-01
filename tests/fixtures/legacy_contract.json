@@ -1,0 +1,742 @@
+{
+  "source_revision": "915284b",
+  "core_pvs": [
+    "XF:08IDB-SE{RGA:1}:Abort",
+    "XF:08IDB-SE{RGA:1}:Acquire",
+    "XF:08IDB-SE{RGA:1}:Close",
+    "XF:08IDB-SE{RGA:1}:Connected",
+    "XF:08IDB-SE{RGA:1}:DataAge",
+    "XF:08IDB-SE{RGA:1}:ExpName",
+    "XF:08IDB-SE{RGA:1}:Go",
+    "XF:08IDB-SE{RGA:1}:GoFilename",
+    "XF:08IDB-SE{RGA:1}:GoOD",
+    "XF:08IDB-SE{RGA:1}:GoOT",
+    "XF:08IDB-SE{RGA:1}:LastError",
+    "XF:08IDB-SE{RGA:1}:OpenExp",
+    "XF:08IDB-SE{RGA:1}:Status",
+    "XF:08IDB-SE{RGA:1}:StatusAge",
+    "XF:08IDB-SE{RGA:1}:View",
+    "XF:08IDB-SE{RGA:1}P:MID1-I",
+    "XF:08IDB-SE{RGA:1}P:MID10-I",
+    "XF:08IDB-SE{RGA:1}P:MID11-I",
+    "XF:08IDB-SE{RGA:1}P:MID12-I",
+    "XF:08IDB-SE{RGA:1}P:MID13-I",
+    "XF:08IDB-SE{RGA:1}P:MID14-I",
+    "XF:08IDB-SE{RGA:1}P:MID15-I",
+    "XF:08IDB-SE{RGA:1}P:MID16-I",
+    "XF:08IDB-SE{RGA:1}P:MID17-I",
+    "XF:08IDB-SE{RGA:1}P:MID18-I",
+    "XF:08IDB-SE{RGA:1}P:MID19-I",
+    "XF:08IDB-SE{RGA:1}P:MID2-I",
+    "XF:08IDB-SE{RGA:1}P:MID20-I",
+    "XF:08IDB-SE{RGA:1}P:MID3-I",
+    "XF:08IDB-SE{RGA:1}P:MID4-I",
+    "XF:08IDB-SE{RGA:1}P:MID5-I",
+    "XF:08IDB-SE{RGA:1}P:MID6-I",
+    "XF:08IDB-SE{RGA:1}P:MID7-I",
+    "XF:08IDB-SE{RGA:1}P:MID8-I",
+    "XF:08IDB-SE{RGA:1}P:MID9-I",
+    "XF:08IDB-VA{RGA:1}Mass:MID1",
+    "XF:08IDB-VA{RGA:1}Mass:MID10",
+    "XF:08IDB-VA{RGA:1}Mass:MID11",
+    "XF:08IDB-VA{RGA:1}Mass:MID12",
+    "XF:08IDB-VA{RGA:1}Mass:MID13",
+    "XF:08IDB-VA{RGA:1}Mass:MID14",
+    "XF:08IDB-VA{RGA:1}Mass:MID15",
+    "XF:08IDB-VA{RGA:1}Mass:MID16",
+    "XF:08IDB-VA{RGA:1}Mass:MID17",
+    "XF:08IDB-VA{RGA:1}Mass:MID18",
+    "XF:08IDB-VA{RGA:1}Mass:MID19",
+    "XF:08IDB-VA{RGA:1}Mass:MID2",
+    "XF:08IDB-VA{RGA:1}Mass:MID20",
+    "XF:08IDB-VA{RGA:1}Mass:MID3",
+    "XF:08IDB-VA{RGA:1}Mass:MID4",
+    "XF:08IDB-VA{RGA:1}Mass:MID5",
+    "XF:08IDB-VA{RGA:1}Mass:MID6",
+    "XF:08IDB-VA{RGA:1}Mass:MID7",
+    "XF:08IDB-VA{RGA:1}Mass:MID8",
+    "XF:08IDB-VA{RGA:1}Mass:MID9"
+  ],
+  "pvs": {
+    "XF:08IDB-SE{RGA:1}:Abort": {
+      "attr": "abort",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:AbortExp": {
+      "attr": "abort_exp",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:Acquire": {
+      "attr": "acquire",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:ActiveFile": {
+      "attr": "active_file",
+      "dtype": "str",
+      "value": "",
+      "max_length": 320,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:Close": {
+      "attr": "close",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:CloseExp": {
+      "attr": "close_exp",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:Connected": {
+      "attr": "connected",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:DataAge": {
+      "attr": "data_age",
+      "dtype": "float",
+      "value": -1.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 0
+    },
+    "XF:08IDB-SE{RGA:1}:DataCycles": {
+      "attr": "data_cycles",
+      "dtype": "int",
+      "value": 1,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:DataMsFmt": {
+      "attr": "data_ms_fmt",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:DataRawAge": {
+      "attr": "data_raw_age",
+      "dtype": "float",
+      "value": -1.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 0
+    },
+    "XF:08IDB-SE{RGA:1}:DataRawLine": {
+      "attr": "data_raw_line",
+      "dtype": "str",
+      "value": "",
+      "max_length": 4096,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:DataTimeFmt": {
+      "attr": "data_time_fmt",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:ExpName": {
+      "attr": "experiment",
+      "dtype": "str",
+      "value": "file56.exp",
+      "max_length": 256,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:Go": {
+      "attr": "go",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:GoFilename": {
+      "attr": "go_filename",
+      "dtype": "str",
+      "value": "",
+      "max_length": 256,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:GoOD": {
+      "attr": "go_od",
+      "dtype": "int",
+      "value": 1,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:GoOT": {
+      "attr": "go_ot",
+      "dtype": "int",
+      "value": 1,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LFetch": {
+      "attr": "l_fetch",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LItem": {
+      "attr": "l_item",
+      "dtype": "str",
+      "value": "Legends",
+      "max_length": 64,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LOpts": {
+      "attr": "l_opts",
+      "dtype": "str",
+      "value": "",
+      "max_length": 320,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LResp": {
+      "attr": "l_resp",
+      "dtype": "str",
+      "value": "",
+      "max_length": 1024,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LView": {
+      "attr": "l_view",
+      "dtype": "int",
+      "value": 1,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:LastError": {
+      "attr": "last_error",
+      "dtype": "str",
+      "value": "",
+      "max_length": 256,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:OpenExp": {
+      "attr": "open_exp",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RawCmd": {
+      "attr": "raw_cmd",
+      "dtype": "str",
+      "value": "",
+      "max_length": 320,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RawResp": {
+      "attr": "raw_resp",
+      "dtype": "str",
+      "value": "",
+      "max_length": 512,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RawSend": {
+      "attr": "raw_send",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RefreshFile": {
+      "attr": "refresh_file",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RestartLinks": {
+      "attr": "restart_links",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:RunExp": {
+      "attr": "run_exp",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:Status": {
+      "attr": "status",
+      "dtype": "str",
+      "value": "Disconnected",
+      "max_length": 32,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:StatusAge": {
+      "attr": "status_age",
+      "dtype": "float",
+      "value": -1.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 0
+    },
+    "XF:08IDB-SE{RGA:1}:View": {
+      "attr": "view",
+      "dtype": "int",
+      "value": 1,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:XArgs": {
+      "attr": "x_args",
+      "dtype": "str",
+      "value": "",
+      "max_length": 320,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:XName": {
+      "attr": "x_name",
+      "dtype": "str",
+      "value": "Status",
+      "max_length": 64,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:XResp": {
+      "attr": "x_resp",
+      "dtype": "str",
+      "value": "",
+      "max_length": 512,
+      "read_only": true,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}:XSend": {
+      "attr": "x_send",
+      "dtype": "int",
+      "value": 0,
+      "max_length": 1,
+      "read_only": null,
+      "precision": null
+    },
+    "XF:08IDB-SE{RGA:1}P:MID1-I": {
+      "attr": "mid1",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID10-I": {
+      "attr": "mid10",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID11-I": {
+      "attr": "mid11",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID12-I": {
+      "attr": "mid12",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID13-I": {
+      "attr": "mid13",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID14-I": {
+      "attr": "mid14",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID15-I": {
+      "attr": "mid15",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID16-I": {
+      "attr": "mid16",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID17-I": {
+      "attr": "mid17",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID18-I": {
+      "attr": "mid18",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID19-I": {
+      "attr": "mid19",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID2-I": {
+      "attr": "mid2",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID20-I": {
+      "attr": "mid20",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID3-I": {
+      "attr": "mid3",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID4-I": {
+      "attr": "mid4",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID5-I": {
+      "attr": "mid5",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID6-I": {
+      "attr": "mid6",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID7-I": {
+      "attr": "mid7",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID8-I": {
+      "attr": "mid8",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-SE{RGA:1}P:MID9-I": {
+      "attr": "mid9",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 15
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID1": {
+      "attr": "mass1",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID10": {
+      "attr": "mass10",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID11": {
+      "attr": "mass11",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID12": {
+      "attr": "mass12",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID13": {
+      "attr": "mass13",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID14": {
+      "attr": "mass14",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID15": {
+      "attr": "mass15",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID16": {
+      "attr": "mass16",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID17": {
+      "attr": "mass17",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID18": {
+      "attr": "mass18",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID19": {
+      "attr": "mass19",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID2": {
+      "attr": "mass2",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID20": {
+      "attr": "mass20",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID3": {
+      "attr": "mass3",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID4": {
+      "attr": "mass4",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID5": {
+      "attr": "mass5",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID6": {
+      "attr": "mass6",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID7": {
+      "attr": "mass7",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID8": {
+      "attr": "mass8",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    },
+    "XF:08IDB-VA{RGA:1}Mass:MID9": {
+      "attr": "mass9",
+      "dtype": "float",
+      "value": 0.0,
+      "max_length": 1,
+      "read_only": true,
+      "precision": 3
+    }
+  },
+  "client_api": [
+    "abort_experiment",
+    "associate_file",
+    "check_links",
+    "close_experiment",
+    "command_socket",
+    "connect",
+    "data_socket",
+    "disconnect",
+    "fetch_data_once",
+    "fetch_legends",
+    "fetch_legends_once",
+    "fetch_status_once",
+    "get_hotlink_latest",
+    "get_hotlink_latest_timestamp",
+    "get_last_error",
+    "get_latest_raw_line",
+    "get_latest_raw_line_timestamp",
+    "get_latest_row",
+    "get_latest_row_timestamp",
+    "get_latest_status",
+    "get_latest_status_timestamp",
+    "get_legends",
+    "initialize",
+    "l_call_once",
+    "list_hotlinks",
+    "open_experiment",
+    "open_experiment_commands",
+    "open_experiment_data",
+    "open_experiment_status",
+    "parse_legends",
+    "parse_numeric_row",
+    "query_filename",
+    "query_filename_data",
+    "query_socket_filename",
+    "reconnect_link_sockets",
+    "request_raw",
+    "run_experiment",
+    "safe_abort_and_close",
+    "safe_abort_and_wait",
+    "shutdown",
+    "snapshot",
+    "start_data_link",
+    "start_hotlink",
+    "start_status_link",
+    "status_socket",
+    "stop_all_hotlinks",
+    "stop_hotlink",
+    "stop_links",
+    "wait_for_status_prefix",
+    "x_abort",
+    "x_call",
+    "x_close",
+    "x_go",
+    "x_status"
+  ]
+}

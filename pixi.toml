@@ -1,6 +1,6 @@
 [workspace]
 name = "hiden-rga-ioc"
-version = "1.0.0-rc.1"
+version = "1.0.0-rc.2"
 description = "Hiden RGA MASsoft IOC via caproto"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
@@ -19,4 +19,4 @@ EPICS_CAS_BEACON_ADDR_LIST = "10.66.59.255"
 EPICS_CAS_INTF_ADDR_LIST = "0.0.0.0"
 
 [tasks]
-ioc = { cmd = "python cap2_aj2.py", cwd = "hiden", description = "Run the RGA IOC" }
+ioc = { cmd = "python cap3.py", cwd = "hiden", description = "Run the unified RGA IOC" }

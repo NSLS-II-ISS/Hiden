@@ -112,7 +112,7 @@ def test_historical_legends_match_stream_values(client, sim):
 
 
 def test_extended_one_shot_data_counts_masses_not_time_headers(sim):
-    from massoft_client_aj2 import MASsoftClient
+    from massoft_client import MASsoftClient
 
     sim.legends = ["Elapsed time", "Time (ms)", "Scan 1 : mass 2.00", "Scan 2 : mass 40.00"]
     sim.row = "00:00:00\t0\t0\t5.6e-9"
@@ -232,8 +232,8 @@ def test_command_injection_is_rejected(client):
     assert client.x_status() == "ScanningActive"
 
 
-def test_extended_queries_and_extra_hotlink(sim):
-    from massoft_client_aj2 import MASsoftClient
+def test_diagnostic_queries_and_extra_hotlink(sim):
+    from massoft_client import MASsoftClient
 
     obj = MASsoftClient(
         MASsoftConfig(
@@ -260,6 +260,36 @@ def test_extended_queries_and_extra_hotlink(sim):
         assert obj.list_hotlinks() == []
     finally:
         obj.disconnect()
+
+
+def test_disconnect_before_connect_is_idempotent(client):
+    client.disconnect()
+    client.disconnect()
+    assert client.current_file is None
+    assert client.list_hotlinks() == []
+    assert client.get_latest_row() is None
+    for sock in (client.command_socket, client.status_socket, client.data_socket):
+        assert not sock.is_connected()
+
+
+def test_reopen_cleans_core_and_diagnostic_links(client):
+    client.open_experiment("first.exp")
+    client.start_status_link()
+    client.start_data_link()
+    client.start_hotlink("Data", name="diagnostic")
+    wait_for(lambda: client.get_hotlink_latest("diagnostic") is not None)
+    wait_for(lambda: client.get_latest_row() is not None)
+    extra_socket, extra_reader = client._extra_links["diagnostic"]
+    readers = (client._status_link, client._data_link, extra_reader)
+    client.open_experiment("second.exp")
+    assert all(not reader.alive for reader in readers)
+    assert not extra_socket.is_connected()
+    assert client.list_hotlinks() == []
+    assert client.get_hotlink_latest("diagnostic") is None
+    assert client.get_hotlink_latest_timestamp("diagnostic") == 0
+    assert client.get_latest_row() is None
+    assert client.get_latest_raw_line() is None
+    assert client.query_filename().endswith("second.exp")
 
 
 def test_greeting_is_consumed_even_if_delayed(client, sim):

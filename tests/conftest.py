@@ -93,14 +93,12 @@ def sim():
         thread.join(2)
 
 
-@pytest.fixture(params=["massoft_client", "massoft_client_aj2"])
-def client(request, sim):
-    import importlib
-
+@pytest.fixture
+def client(sim):
+    from massoft_client import MASsoftClient
     from massoft_protocol import MASsoftConfig
 
-    cls = importlib.import_module(request.param).MASsoftClient
-    obj = cls(
+    obj = MASsoftClient(
         MASsoftConfig(
             host="127.0.0.1",
             port=sim.server_address[1],

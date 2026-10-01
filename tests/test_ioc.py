@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import os
 import socket
 import subprocess
@@ -9,15 +8,14 @@ import time
 from pathlib import Path
 
 import pytest
-from cap2 import worker
+from cap3 import RGAIOC, worker
 from caproto import AlarmSeverity
 from massoft_protocol import MASsoftConfig
 
 
-@pytest.fixture(params=["cap2", "cap2_aj2"])
-def ioc(request, sim):
-    cls = importlib.import_module(request.param).RGAIOC
-    group = cls(prefix="", mas_host="127.0.0.1", mas_port=sim.server_address[1])
+@pytest.fixture
+def ioc(sim):
+    group = RGAIOC(prefix="", mas_host="127.0.0.1", mas_port=sim.server_address[1])
     group.client.cfg = MASsoftConfig(
         host="127.0.0.1",
         port=sim.server_address[1],
@@ -115,8 +113,7 @@ def test_acquire_with_time_headers_and_scan_mass_legends(ioc, sim):
         for i in range(len(masses) + 1, 21):
             assert getattr(ioc, f"mass{i}").value == 0
             assert getattr(ioc, f"mid{i}").value == 0
-        if hasattr(ioc, "data_raw_line"):
-            assert ioc.data_raw_line.value == sim.row
+        assert ioc.data_raw_line.value == sim.row
 
     asyncio.run(scenario())
 
@@ -226,9 +223,7 @@ def test_view_change_requires_pause_then_clears_old_metadata(ioc):
     asyncio.run(scenario())
 
 
-def test_extended_commissioning_disabled_without_disconnect(sim):
-    from cap2_aj2 import RGAIOC
-
+def test_commissioning_disabled_without_disconnect(sim):
     ioc = RGAIOC(prefix="", mas_host="127.0.0.1", mas_port=sim.server_address[1])
 
     async def scenario():
@@ -240,6 +235,37 @@ def test_extended_commissioning_disabled_without_disconnect(sim):
             assert not any("-xGo" in cmd for _, cmd in sim.commands)
         finally:
             await worker(ioc.client.disconnect)
+
+    asyncio.run(scenario())
+
+
+def test_data_options_and_raw_diagnostics_in_unified_ioc(ioc, sim):
+    async def scenario():
+        await ioc.open_exp.write(1)
+        assert ioc.active_file.value == ioc.client.current_file
+        await ioc.data_cycles.write(3)
+        await ioc.data_time_fmt.write(1)
+        await ioc.data_ms_fmt.write(1)
+        await ioc.acquire.write(1)
+        await publish_when_ready(ioc)
+        assert any(cmd == "-lData -v1 -c3 -t1 -m1 -d0" for _, cmd in sim.commands)
+        assert ioc.data_raw_line.value == sim.row
+        assert ioc.data_raw_line.timestamp == ioc.mid20.timestamp
+        with pytest.raises(ValueError, match="Acquire=0"):
+            await ioc.data_cycles.write(1)
+        assert ioc.acquire.value == 1
+        assert ioc.data_cycles.value == 3
+        await ioc.acquire.write(0)
+        with pytest.raises(ValueError, match="Invalid"):
+            await ioc.data_cycles.write(101)
+        await ioc.data_cycles.write(1)
+        assert not ioc._links_started
+        assert ioc.data_raw_line.value == ""
+        assert ioc.data_raw_age.value == -1
+        await ioc.acquire.write(1)
+        await publish_when_ready(ioc)
+        assert ioc.data_raw_line.value == sim.row
+        assert ioc.mid20.value == pytest.approx(19e-10)
 
     asyncio.run(scenario())
 
@@ -262,8 +288,7 @@ def test_worker_cancellation_waits_for_inflight_command():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("module", ["cap2", "cap2_aj2"])
-def test_real_ca_server_startup_readback_and_readonly(module, monkeypatch, tmp_path):
+def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path):
     from caproto.sync.client import read, write
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -283,7 +308,7 @@ def test_real_ca_server_startup_readback_and_readonly(module, monkeypatch, tmp_p
         proc = subprocess.Popen(
             [
                 sys.executable,
-                str(root / "hiden" / f"{module}.py"),
+                str(root / "hiden" / "cap3.py"),
                 "--prefix",
                 "TEST:",
                 "--interfaces",
