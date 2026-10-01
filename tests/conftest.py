@@ -1,6 +1,7 @@
 """Loopback-only MASsoft emulator: never reaches beamline equipment."""
 
 import contextlib
+import queue
 import re
 import socketserver
 import threading
@@ -50,8 +51,16 @@ class Handler(socketserver.StreamRequestHandler):
                         pass
                     return
                 elif cmd.startswith("-lData"):
+                    data_rows = sim.data_rows
                     while not sim.stopping.is_set() and not sim.drop_links.is_set():
-                        self.wfile.write((sim.row + "\r\n").encode())
+                        if data_rows is not None:
+                            try:
+                                row = data_rows.get(timeout=0.02)
+                            except queue.Empty:
+                                continue
+                        else:
+                            row = sim.data_row()
+                        self.wfile.write((row + "\r\n").encode())
                         if sim.stopping.wait(0.02):
                             return
                     return
@@ -71,12 +80,23 @@ class Simulator(socketserver.ThreadingTCPServer):
         self.commands = []
         self.legends = [f"mass {i}" for i in range(1, 21)]
         self.row = "00:00:00\t0\t" + "\t".join(str(i * 1e-10) for i in range(20))
+        self.live_data = False
+        self.data_rows = None
+        self.run_start = time.time() - 1.0
         self.status = "ScanningActive"
         self.abort_fails = self.abort_stuck = False
         self.greeting = "101"
         self.greeting_delay = 0
         self.stopping = threading.Event()
         self.drop_links = threading.Event()
+
+    def data_row(self):
+        if not self.live_data:
+            return self.row
+        elapsed = int((time.time() - self.run_start) * 1000)
+        seconds = elapsed // 1000
+        prefix = f"{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}\t{elapsed}"
+        return prefix + "\t" + "\t".join(self.row.split("\t")[2:])
 
 
 @pytest.fixture

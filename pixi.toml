@@ -1,6 +1,6 @@
 [workspace]
 name = "hiden-rga-ioc"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 description = "Hiden RGA MASsoft IOC via caproto"
 channels = ["conda-forge"]
 platforms = ["linux-64"]

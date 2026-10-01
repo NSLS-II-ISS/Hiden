@@ -24,6 +24,7 @@ from massoft_protocol import (
     extract_masses,
     get_runtime_config_path,
     load_runtime_config,
+    parse_data_row,
     parse_legends,
     parse_numeric_row,
     quote_path,
@@ -69,6 +70,7 @@ class MASsoftClient:
             self._latest_row_wall_ts = 0.0
             self._last_error = None
             self._expected_count = None
+            self._timing = None
 
     def connect(self):
         self.disconnect()
@@ -228,7 +230,7 @@ class MASsoftClient:
         def receive(lines):
             for line in lines:
                 # A one-channel zero is a valid measurement, not an error code.
-                row = parse_numeric_row(
+                row, elapsed_ms = parse_data_row(
                     line,
                     expected_count=self._expected_count,
                     include_time=include_time,
@@ -240,6 +242,14 @@ class MASsoftClient:
                     self._latest_row_ts = self._latest_raw_row_ts = time.monotonic()
                     # Receipt time only: a new MASsoft link may replay old experiment rows.
                     self._latest_row_wall_ts = time.time()
+                    if self._timing is not None:
+                        self._timing.push(
+                            row,
+                            line,
+                            elapsed_ms,
+                            wall=self._latest_row_wall_ts,
+                            monotonic=self._latest_row_ts,
+                        )
 
         self._data_link = self._link(sock, receive, "MASsoftDataHotlink")
 
@@ -303,7 +313,37 @@ class MASsoftClient:
                 "raw": self._latest_raw_row,
                 "raw_ts": self._latest_raw_row_ts,
                 "error": self._last_error,
+                "timing": None if self._timing is None else self._timing.snapshot(),
             }
+
+    def configure_timing(self, guard):
+        if self._data_link is not None and self._data_link.alive:
+            raise ValueError("Stop data link before configuring source timing")
+        with self._latest_lock:
+            self._timing = guard
+
+    def enable_publication(self, enabled, *, not_before=None):
+        with self._latest_lock:
+            if self._timing is None:
+                if enabled:
+                    raise ValueError("Set SourceStartUTC before Acquire")
+                return
+            self._timing.set_enabled(enabled, not_before=not_before)
+
+    def drain_live_rows(self):
+        with self._latest_lock:
+            if self._timing is None:
+                raise ValueError("Set SourceStartUTC before Acquire")
+            return self._timing.drain(wall=time.time(), monotonic=time.monotonic())
+
+    def check_source_clock(self):
+        with self._latest_lock:
+            if self._timing is not None:
+                self._timing.check_clock(time.time(), time.monotonic())
+
+    def note_dropped_row(self):
+        with self._latest_lock:
+            self._timing.dropped_rows += 1
 
     def _set_latest_status(self, status):
         with self._latest_lock:

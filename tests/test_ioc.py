@@ -1,10 +1,12 @@
 import asyncio
 import os
+import queue
 import socket
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,9 @@ from massoft_protocol import MASsoftConfig
 
 @pytest.fixture
 def ioc(sim):
+    sim.live_data = True
     group = RGAIOC(prefix="", mas_host="127.0.0.1", mas_port=sim.server_address[1])
+    group.sim = sim
     group.client.cfg = MASsoftConfig(
         host="127.0.0.1",
         port=sim.server_address[1],
@@ -29,11 +33,22 @@ def ioc(sim):
 
 async def publish_when_ready(ioc):
     for _ in range(200):
-        if ioc.client.get_latest_row() is not None:
-            await ioc._publish_once()
+        await ioc._publish_once()
+        if ioc._data_valid:
             return
         await asyncio.sleep(0.01)
     raise AssertionError("No data arrived")
+
+
+async def set_verified_origin(ioc):
+    origin = datetime.fromtimestamp(ioc.sim.run_start, timezone.utc).isoformat()
+    await ioc.source_start.write(origin)
+    assert ioc.source_start.value, ioc.last_error.value
+
+
+async def open_with_time(ioc):
+    await ioc.open_exp.write(1)
+    await set_verified_origin(ioc)
 
 
 def test_twenty_channels_schema_and_readonly(ioc):
@@ -47,7 +62,7 @@ def test_twenty_channels_schema_and_readonly(ioc):
 
 def test_open_acquire_close_reopen_and_short_recipe(ioc, sim):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         assert ioc.connected.value == 1
         assert ioc.mass20.value == 20
         await ioc.acquire.write(1)
@@ -61,7 +76,7 @@ def test_open_acquire_close_reopen_and_short_recipe(ioc, sim):
         sim.legends = ["mass 2", "mass 40"]
         sim.row = "00:00:00\t0\t0\t5.6e-9"
         await ioc.experiment.write("new.exp")
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         assert ioc.connected.value == 1
         assert ioc.mass20.value == 0
         assert ioc.mid20.value == 0
@@ -79,7 +94,7 @@ def test_acquire_after_reported_four_digit_greeting(ioc, sim):
 
     async def scenario():
         await ioc.experiment.write("2026-3-alba-rubio1.exp")
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         assert ioc.connected.value == 1, ioc.last_error.value
         assert ioc.last_error.value == ""
         await ioc.acquire.write(1)
@@ -102,7 +117,7 @@ def test_acquire_with_time_headers_and_scan_mass_legends(ioc, sim):
     sim.row = "00:06:51\t411758\t" + "\t".join(map(str, values))
 
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         assert ioc.connected.value == 1, ioc.last_error.value
         await ioc.acquire.write(1)
         assert ioc.acquire.value == 1, ioc.last_error.value
@@ -113,7 +128,7 @@ def test_acquire_with_time_headers_and_scan_mass_legends(ioc, sim):
         for i in range(len(masses) + 1, 21):
             assert getattr(ioc, f"mass{i}").value == 0
             assert getattr(ioc, f"mid{i}").value == 0
-        assert ioc.data_raw_line.value == sim.row
+        assert ioc.data_raw_line.value.split("\t")[2:] == sim.row.split("\t")[2:]
 
     asyncio.run(scenario())
 
@@ -122,7 +137,7 @@ def test_failure_resets_acquire_and_operator_can_recover(ioc, sim):
     async def scenario():
         await ioc.acquire.write(1)
         assert ioc.acquire.value == 0
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         sim.drop_links.set()
@@ -140,7 +155,7 @@ def test_failure_resets_acquire_and_operator_can_recover(ioc, sim):
         assert ioc.status.value == "Error"
         assert ioc.last_error.value
         sim.drop_links.clear()
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         assert ioc.connected.value == 1
@@ -151,7 +166,7 @@ def test_failure_resets_acquire_and_operator_can_recover(ioc, sim):
 
 def test_acquire_zero_does_not_abort_and_age_continues(ioc, sim):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         before = ioc.mid20.timestamp
@@ -172,7 +187,7 @@ def test_acquire_zero_does_not_abort_and_age_continues(ioc, sim):
 
 def test_stale_measurements_are_invalidated(ioc):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         ioc._stale_after_s = 1e-9
@@ -186,6 +201,7 @@ def test_stale_measurements_are_invalidated(ioc):
 def test_concurrent_open_requests_are_serialized(ioc):
     async def scenario():
         await asyncio.gather(ioc.open_exp.write(1), ioc.open_exp.write(1))
+        await set_verified_origin(ioc)
         assert ioc.connected.value == 1
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
@@ -195,7 +211,7 @@ def test_concurrent_open_requests_are_serialized(ioc):
 
 def test_invalid_acquire_write_preserves_running_state(ioc):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         await ioc.acquire.write(2)
         assert ioc.acquire.value == 1
@@ -207,7 +223,7 @@ def test_invalid_acquire_write_preserves_running_state(ioc):
 
 def test_view_change_requires_pause_then_clears_old_metadata(ioc):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         await ioc.acquire.write(1)
         with pytest.raises(ValueError, match="Acquire=0"):
             await ioc.view.write(2)
@@ -216,6 +232,8 @@ def test_view_change_requires_pause_then_clears_old_metadata(ioc):
         await ioc.view.write(2)
         assert not ioc._links_started
         assert ioc.mass20.value == 0
+        assert ioc.source_start.value == ""
+        await set_verified_origin(ioc)
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         assert ioc.mass20.value == 20
@@ -241,7 +259,7 @@ def test_commissioning_disabled_without_disconnect(sim):
 
 def test_data_options_and_raw_diagnostics_in_unified_ioc(ioc, sim):
     async def scenario():
-        await ioc.open_exp.write(1)
+        await open_with_time(ioc)
         assert ioc.active_file.value == ioc.client.current_file
         await ioc.data_cycles.write(3)
         await ioc.data_time_fmt.write(1)
@@ -249,8 +267,9 @@ def test_data_options_and_raw_diagnostics_in_unified_ioc(ioc, sim):
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
         assert any(cmd == "-lData -v1 -c3 -t1 -m1 -d0" for _, cmd in sim.commands)
-        assert ioc.data_raw_line.value == sim.row
-        assert ioc.data_raw_line.timestamp == ioc.mid20.timestamp
+        assert ioc.data_raw_line.value.split("\t")[2:] == sim.row.split("\t")[2:]
+        assert ioc.data_raw_line.timestamp <= time.time()
+        assert ioc.mid20.timestamp <= time.time()
         with pytest.raises(ValueError, match="Acquire=0"):
             await ioc.data_cycles.write(1)
         assert ioc.acquire.value == 1
@@ -264,8 +283,229 @@ def test_data_options_and_raw_diagnostics_in_unified_ioc(ioc, sim):
         assert ioc.data_raw_age.value == -1
         await ioc.acquire.write(1)
         await publish_when_ready(ioc)
-        assert ioc.data_raw_line.value == sim.row
+        assert ioc.data_raw_line.value.split("\t")[2:] == sim.row.split("\t")[2:]
         assert ioc.mid20.value == pytest.approx(19e-10)
+
+    asyncio.run(scenario())
+
+
+async def wait_until(predicate):
+    for _ in range(200):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("Timed out waiting for scripted stream")
+
+
+def scripted_row(sim, elapsed_ms, value):
+    seconds = elapsed_ms // 1000
+    return (
+        f"{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}\t{elapsed_ms}\t"
+        + "\t".join([str(value)] * len(sim.legends))
+    )
+
+
+async def wait_for_counter(ioc, elapsed):
+    await wait_until(
+        lambda: (
+            ioc.client.snapshot()["timing"]["latest"] is not None
+            and ioc.client.snapshot()["timing"]["latest"].elapsed_ms == elapsed
+        )
+    )
+
+
+def test_acquire_requires_verified_origin_without_starting_data_stream(ioc, sim):
+    async def scenario():
+        await ioc.acquire.write(0)
+        assert ioc.data_state.value == "Disconnected"
+        await ioc.open_exp.write(1)
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 0
+        assert ioc.connected.value == 1
+        assert "SourceStartUTC" in ioc.last_error.value
+        assert ioc.data_state.value == "AwaitingTime"
+        assert not any(cmd.startswith("-lData") for _, cmd in sim.commands)
+        await ioc.source_start.write("2026-10-01T12:00:00")
+        assert ioc.source_start.value == ""
+        assert "offset" in ioc.last_error.value
+        await set_verified_origin(ioc)
+        await ioc.acquire.write(1)
+        await publish_when_ready(ioc)
+        assert ioc.data_state.value == "Live"
+
+    asyncio.run(scenario())
+
+
+def test_reference_controls_cannot_change_while_publishing_and_go_clears_origin(ioc, sim):
+    async def scenario():
+        await open_with_time(ioc)
+        reference = ioc.source_start.value
+        await ioc.acquire.write(1)
+        await ioc.source_start.write(reference)
+        assert "Acquire=0" in ioc.last_error.value
+        assert ioc.source_start.value == reference
+        assert ioc.acquire.value == 1
+        with pytest.raises(ValueError, match="Acquire=0"):
+            await ioc.source_max_age.write(20)
+        await ioc.go.write(1)
+        assert "Acquire=0" in ioc.last_error.value
+        assert not any(cmd.startswith("-xGo") for _, cmd in sim.commands)
+        await ioc.acquire.write(0)
+        with pytest.raises(ValueError, match="DataMsFmt=1"):
+            await ioc.data_ms_fmt.write(0)
+        await ioc.restart_links.write(1)
+        assert ioc.data_state.value == "Paused"
+        assert ioc.source_start.value == reference
+        # Hardware-changing command is tested only against the loopback simulator.
+        await ioc.go.write(1)
+        assert any(cmd.startswith("-xGo") for _, cmd in sim.commands)
+        assert ioc.source_start.value == ""
+        assert ioc.data_state.value == "AwaitingTime"
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 0
+        assert "SourceStartUTC" in ioc.last_error.value
+
+    asyncio.run(scenario())
+
+
+def test_replay_fifo_source_timestamps_and_reopen_boundary(ioc, sim, monkeypatch):
+    sim.run_start = time.time() - 3600
+    sim.data_rows = queue.Queue()
+    published = []
+    original_write = ioc.mid1.write
+
+    async def record(value, **kwargs):
+        if kwargs.get("severity") == AlarmSeverity.NO_ALARM:
+            published.append((value, kwargs["timestamp"]))
+        await original_write(value, **kwargs)
+
+    monkeypatch.setattr(ioc.mid1, "write", record)
+
+    async def scenario():
+        await open_with_time(ioc)
+        await ioc.acquire.write(1)
+        sim.data_rows.put(scripted_row(sim, 1000, 123))
+        sim.data_rows.put(scripted_row(sim, 2000, 456))
+        await wait_for_counter(ioc, 2000)
+        await ioc._publish_once()
+        assert published == []
+        assert ioc.history_rows.value == 2
+        assert ioc.published_rows.value == 0
+        assert ioc.data_state.value == "CatchingUp"
+        assert ioc.data_age.value < 1
+        assert ioc.source_age.value > 3500
+        assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
+        elapsed = int((time.time() - sim.run_start) * 1000) + 5
+        for index, value in enumerate((0, -5.6e-9, 8.1e-7)):
+            sim.data_rows.put(scripted_row(sim, elapsed + index, value))
+        await wait_for_counter(ioc, elapsed + 2)
+        await ioc._publish_once()
+        assert [value for value, _ in published] == [0, -5.6e-9, 8.1e-7]
+        assert [ts for _, ts in published] == [
+            ioc._source_epoch + (elapsed + i) / 1000 for i in range(3)
+        ]
+        assert ioc.published_rows.value == 3
+        assert ioc.dropped_rows.value == 0
+        assert ioc.data_state.value == "Live"
+        assert ioc.mid20.timestamp == pytest.approx(published[-1][1], abs=1e-6, rel=0)
+        # A fresh connection starts over, but even recent pre-boundary data stays out.
+        sim.data_rows = queue.Queue()
+        await ioc.open_exp.write(1)
+        assert ioc.source_start.value == ""
+        await set_verified_origin(ioc)
+        await ioc.acquire.write(1)
+        sim.data_rows.put(scripted_row(sim, 1000, 123))
+        sim.data_rows.put(scripted_row(sim, elapsed + 2, 8.1e-7))
+        await wait_for_counter(ioc, elapsed + 2)
+        await ioc._publish_once()
+        assert len(published) == 3
+        assert ioc.history_rows.value == 2
+        assert ioc.published_rows.value == 0
+        assert ioc.data_state.value == "CatchingUp"
+        live = int((time.time() - sim.run_start) * 1000) + 5
+        sim.data_rows.put(scripted_row(sim, live, 9e-7))
+        await publish_when_ready(ioc)
+        assert len(published) == 4
+        assert ioc.published_rows.value == 1
+        assert published[-1][1] > published[-2][1]
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fault", ["overflow", "reset", "missing_ms", "future"])
+def test_stream_timing_faults_stop_publication_and_require_new_reference(ioc, sim, fault):
+    sim.run_start = time.time() - 3600
+    sim.data_rows = queue.Queue()
+    ioc._queue_capacity = 2
+
+    async def scenario():
+        await open_with_time(ioc)
+        await ioc.acquire.write(1)
+        elapsed = int((time.time() - sim.run_start) * 1000) + 5
+        sim.data_rows.put(scripted_row(sim, elapsed, 1e-9))
+        if fault == "overflow":
+            sim.data_rows.put(scripted_row(sim, elapsed + 1, 2e-9))
+            sim.data_rows.put(scripted_row(sim, elapsed + 2, 3e-9))
+        elif fault == "reset":
+            sim.data_rows.put(scripted_row(sim, 0, 0))
+        elif fault == "missing_ms":
+            sim.data_rows.put("\t".join(["0"] * len(sim.legends)))
+        else:
+            sim.data_rows.put(scripted_row(sim, elapsed + 60000, 2e-9))
+        await wait_until(lambda: not ioc.client._data_link.alive)
+        try:
+            await ioc._publish_once()
+        except Exception as exc:
+            await ioc._fail(exc)
+        assert ioc.acquire.value == 0
+        assert ioc.connected.value == 0
+        assert ioc.data_state.value == "Error"
+        assert ioc.source_start.value == ""
+        assert ioc.published_rows.value == 0
+        assert ioc.last_error.value
+        assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
+        if fault == "overflow":
+            assert ioc.dropped_rows.value == 3
+            assert "overflow" in ioc.last_error.value
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+def test_pause_drains_without_overflow_and_alarms_preserve_source_time(ioc, sim):
+    sim.data_rows = queue.Queue()
+    ioc._queue_capacity = 1
+
+    async def scenario():
+        await open_with_time(ioc)
+        await ioc.acquire.write(1)
+        elapsed = int((time.time() - sim.run_start) * 1000) + 5
+        sim.data_rows.put(scripted_row(sim, elapsed, 1e-9))
+        await publish_when_ready(ioc)
+        stamp = ioc.mid1.timestamp
+        link = ioc.client._data_link
+        await ioc.acquire.write(0)
+        for index in range(1, 5):
+            sim.data_rows.put(scripted_row(sim, elapsed + index, 1e-9))
+        await wait_for_counter(ioc, elapsed + 4)
+        await ioc._publish_once()
+        assert ioc.queue_depth.value == 0
+        assert ioc.dropped_rows.value == 0
+        assert ioc.data_state.value == "Paused"
+        assert ioc.mid1.timestamp == stamp
+        assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
+        await ioc.acquire.write(1)
+        await ioc._publish_once()
+        assert ioc.data_state.value != "Live"
+        assert ioc.published_rows.value == 1
+        elapsed = int((time.time() - sim.run_start) * 1000) + 5
+        sim.data_rows.put(scripted_row(sim, elapsed, 2e-9))
+        await publish_when_ready(ioc)
+        assert ioc.client._data_link is link
+        assert ioc.mid1.timestamp > stamp
+        assert ioc.published_rows.value == 2
+        assert ioc.data_state.value == "Live"
 
     asyncio.run(scenario())
 
@@ -288,7 +528,7 @@ def test_worker_cancellation_waits_for_inflight_command():
     asyncio.run(scenario())
 
 
-def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path):
+def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim):
     from caproto.sync.client import read, write
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -303,6 +543,8 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path):
     }.items():
         monkeypatch.setenv(key, value)
     root = Path(__file__).resolve().parents[1]
+    sim.run_start = time.time() - 3600
+    sim.data_rows = queue.Queue()
     logfile = tmp_path / "ioc.log"
     with logfile.open("w") as log:
         proc = subprocess.Popen(
@@ -315,6 +557,8 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path):
                 "127.0.0.1",
                 "--mas-host",
                 "127.0.0.1",
+                "--mas-port",
+                str(sim.server_address[1]),
             ],
             stdout=log,
             stderr=log,
@@ -337,6 +581,45 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path):
             assert read(value_pv, timeout=2).data[0] == 0
             with pytest.raises(Exception, match="[Aa]ccess|[Rr]ead|[Ww]rite"):
                 write(value_pv, 123, timeout=2, notify=True)
+            control = "TEST:XF:08IDB-SE{RGA:1}:"
+            write(control + "OpenExp", 1, timeout=3, notify=True)
+            assert read(control + "Connected", timeout=2).data[0] == 1
+            origin = datetime.fromtimestamp(sim.run_start, timezone.utc).isoformat()
+            write(control + "SourceStartUTC", origin, timeout=3, notify=True)
+            write(control + "Acquire", 1, timeout=3, notify=True)
+            assert read(control + "Acquire", timeout=2).data[0] == 1
+            sim.data_rows.put(scripted_row(sim, 1000, 123))
+            for _ in range(50):
+                if read(control + "HistoryRows", timeout=2).data[0] == 1:
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("Historical row was not received")
+            result = read(value_pv, data_type="time", timeout=2)
+            assert result.data[0] == 0
+            assert result.metadata.severity == AlarmSeverity.INVALID_ALARM
+            assert read(control + "PublishedRows", timeout=2).data[0] == 0
+            elapsed = int((time.time() - sim.run_start) * 1000) + 5
+            sim.data_rows.put(scripted_row(sim, elapsed, -5.6e-9))
+            for _ in range(50):
+                result = read(value_pv, data_type="time", timeout=2)
+                if result.metadata.severity == AlarmSeverity.NO_ALARM:
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("Live row was not published")
+            assert result.data[0] == -5.6e-9
+            assert result.metadata.timestamp == pytest.approx(
+                datetime.fromisoformat(origin).timestamp() + elapsed / 1000,
+                abs=1e-6,
+                rel=0,
+            )
+            assert read(control + "PublishedRows", timeout=2).data[0] == 1
+            with pytest.raises(Exception, match="[Aa]ccess|[Rr]ead|[Ww]rite"):
+                write(control + "SourceTime", 0, timeout=2, notify=True)
+            assert not any(
+                cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands
+            )
         finally:
             proc.terminate()
             proc.wait(timeout=10)

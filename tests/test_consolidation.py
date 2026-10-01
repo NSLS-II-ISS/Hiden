@@ -26,7 +26,22 @@ def test_preserves_deployed_pv_contract():
         }
         for name, pv in ioc.pvdb.items()
     }
-    assert actual == CONTRACT["pvs"]
+    expected = {name: dict(spec) for name, spec in CONTRACT["pvs"].items()}
+    # Guarded publication now requires the source millisecond counter by default.
+    expected["XF:08IDB-SE{RGA:1}:DataMsFmt"]["value"] = 1
+    assert {name: actual[name] for name in expected} == expected
+    new_names = {
+        "SourceStartUTC",
+        "SourceMaxAge",
+        "DataState",
+        "SourceTime",
+        "SourceAge",
+        "HistoryRows",
+        "QueueDepth",
+        "DroppedRows",
+        "PublishedRows",
+    }
+    assert actual.keys() - expected.keys() == {f"XF:08IDB-SE{{RGA:1}}:{name}" for name in new_names}
     assert set(CONTRACT["core_pvs"]) <= actual.keys()
     assert ioc.client_class is MASsoftClient
 
@@ -37,6 +52,15 @@ def test_archiver_manifest_matches_all_twenty_channels():
     expected = {getattr(ioc, f"{kind}{i}").pvname for kind in ("mass", "mid") for i in range(1, 21)}
     assert len(names) == len(set(names)) == 40
     assert set(names) == expected
+
+
+def test_quality_manifest_contains_existing_pvs_without_duplicates():
+    ioc = RGAIOC(prefix="", mas_host="127.0.0.1")
+    names = (ROOT / "archiver-quality-pvs.txt").read_text().splitlines()
+    assert len(names) == len(set(names))
+    assert set(names) <= ioc.pvdb.keys()
+    assert "XF:08IDB-SE{RGA:1}:DataState" in names
+    assert "XF:08IDB-SE{RGA:1}:SourceStartUTC" in names
 
 
 def test_single_client_implementation_retains_public_api():

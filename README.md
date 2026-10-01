@@ -4,21 +4,23 @@ One IOC, two ways to launch it: **`hiden/cap3.py`** uses
 **`hiden/massoft_client.py`**, either through Pixi on IOC2 or directly with Python.
 Direct-Python setup and implementation notes are in `hiden/README.md`.
 
-Release candidate: **1.0.0-rc.2**. This consolidates the implementations; it is
-**not yet approved for unattended production**. A newly opened MASsoft data link
-can replay old measurements which the IOC timestamps at receipt. A small
-`DataAge` therefore does not prove current measurement data. Resolve and validate
-this before production sign-off; clock synchronization alone does not fix it.
-See `RELEASE_REVIEW.md` for the outstanding gates.
+Release candidate: **1.0.0-rc.3**, **not yet approved for unattended production**.
+Guarded acquisition now requires an operator-verified `SourceStartUTC`, withholds
+historical replay, and timestamps eligible MID rows from run start plus elapsed
+milliseconds. A small `DataAge` still means receipt freshness, not measurement
+freshness. Follow the [isolated commissioning procedure](docs/GUARDED_ACQUISITION.md)
+before using production PV names. See `RELEASE_REVIEW.md` for outstanding gates.
 
 ## Project Layout And Migration
 
-- `hiden/cap3.py`: all 78 PVs, 20 MID/mass pairs, serialized lifecycle and publication.
+- `hiden/cap3.py`: 87 PVs (78 existing + 9 source-quality PVs), 20 MID/mass pairs.
 - `hiden/massoft_client.py`: unified command, status, data and diagnostic client API.
 - `hiden/massoft_protocol.py`: shared configuration, CRLF transport and strict parsing.
+- `hiden/massoft_timing.py`: source-time guard, bounded FIFO and offline CSV-origin helper.
 - `hiden/hiden_config.json`: MASsoft target and IOC defaults.
 - `st.cmd`, `config`, `pixi.toml`, `pixi.lock`: IOC2 launch and managed deployment inputs.
 - `archiver-pvs.txt`: the unchanged 40 mass/intensity PV names.
+- `archiver-quality-pvs.txt`: additional quality/timing PVs for operator-managed archiving.
 - `scripts/configure-massoft-time.ps1`: guarded VM NTP configuration/verification.
 - `tests/`: loopback, CA, pre-consolidation contract and mocked time-helper tests.
 
@@ -26,8 +28,9 @@ The obsolete `cap2.py`, `cap2_aj2.py`, and `massoft_client_aj2.py` files are rem
 not kept as parallel implementations or wrappers. Update custom launch commands
 to `cap3.py` and imports to `massoft_client`. Pixi and `st.cmd` use the new entry
 point automatically. All former extended PVs are available in direct Python too;
-commissioning commands remain disabled by default. Existing PV names, defaults,
-types and access permissions are unchanged from the extended IOC.
+commissioning commands remain disabled by default. Existing PV names, types and
+access permissions remain. `DataMsFmt` now defaults to 1 and cannot be disabled;
+`Acquire=1` requires a verified time reference after `OpenExp`.
 
 Deploy the complete `hiden` directory. Stop the previous Hiden IOC before starting
 the new one; do not run duplicate PV servers. Historical code remains in Git.
@@ -200,11 +203,10 @@ valid range)`; retain those diagnostics for follow-up if they persist. Do not
 treat root dispersion as the measured clock offset or tune polling solely from
 that peer diagnostic.
 
-Time synchronization does not repair previously archived timestamps or the
-separate startup/reconnection history replay. The IOC still timestamps rows
-when received, and `DataAge` measures receipt freshness, not measurement age.
-Neither this helper nor a clock correction makes the IOC a lossless archive of
-every historical MASsoft cycle. Keep the original experiment exports for comparison.
+Time synchronization does not repair previously archived timestamps or prevent
+MASsoft startup/reconnection replay. The source-time guard now withholds old rows;
+`DataAge` still measures receipt freshness. Neither this helper nor guarded live
+publication makes the IOC a lossless historical archive. Keep original exports.
 
 ## Workstation Access
 
@@ -257,10 +259,15 @@ Use `dataRetrievalURL` for samples, not the separate `retrievalURL` ending in `/
 
 ## Operating Sequence
 
+**For the first rc.3 trial, use the TEST-prefixed procedure in
+[Guarded Live Acquisition](docs/GUARDED_ACQUISITION.md).** The commands below are
+for the normal PV names after validation. Do not start two Hiden instances.
+
 Open the experiment template:
 
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp"
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 0
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:View' 1
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:OpenExp' 1
 caget XF:08IDB-SE{RGA:1}:Connected
@@ -273,13 +280,26 @@ If the experiment is stopped and you intend to start a scan:
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:Go' 1
 ```
 
-If MASsoft is already running the selected experiment, skip `Go`. Enable IOC data publishing with:
+If MASsoft is already running the selected experiment, skip `Go`. Confirm the
+selected run's CSV header represents its origin, then set the explicit UTC start
+as described in the commissioning guide. Do not use the time you connected:
+
+```bash
+read -r -p 'Verified run-start UTC ISO timestamp: ' start_utc
+caput -c -w 120 -S 'XF:08IDB-SE{RGA:1}:SourceStartUTC' "$start_utc"
+caget -S 'XF:08IDB-SE{RGA:1}:SourceStartUTC' 'XF:08IDB-SE{RGA:1}:LastError'
+```
+
+Only after the reference is accepted and LastError is empty:
 
 ```bash
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 1
 ```
 
-After restarting the IOC, repeat `ExpName`, `View`, `OpenExp`, and `Acquire`; these settings are not restored automatically. `Acquire=0` stops IOC publishing without requesting a MASsoft abort.
+After restarting the IOC, repeat `ExpName`, `View`, `OpenExp`, `SourceStartUTC`,
+and `Acquire`; these settings are not restored automatically. `Acquire=0` stops
+publication without aborting MASsoft. Go, a changed View, OpenExp or a fault
+clears the old time reference. Acquisition after Go needs the new run's origin.
 
 For an already-running file with a full Windows path, use doubled backslashes
 with EPICS `caput -S` from Bash. Set `View` **before** `OpenExp`:
@@ -293,10 +313,19 @@ caget 'XF:08IDB-SE{RGA:1}:Connected'
 caget -S 'XF:08IDB-SE{RGA:1}:LastError'
 ```
 
-Only after `Connected=1` and no error, enable publishing:
+Only after `Connected=1` and no error, set the verified origin of this exact run:
+
+```bash
+read -r -p 'Verified run-start UTC ISO timestamp: ' start_utc
+caput -c -w 120 -S 'XF:08IDB-SE{RGA:1}:SourceStartUTC' "$start_utc"
+caget -S 'XF:08IDB-SE{RGA:1}:SourceStartUTC' 'XF:08IDB-SE{RGA:1}:LastError'
+```
+
+After checking the accepted reference and empty LastError, enable publication:
 
 ```bash
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 1
+caget -S 'XF:08IDB-SE{RGA:1}:DataState' 'XF:08IDB-SE{RGA:1}:LastError'
 ```
 
 `-c` waits for put completion; a momentary PV returning zero is not proof of
@@ -381,22 +410,22 @@ The pixi IOC publishes MID intensity and mass readbacks from `MID1` through `MID
 The intended lifecycle is:
 
 ```text
-OpenExp -> Go or RunExp -> Acquire=1 -> Abort/AbortExp if needed -> Close/CloseExp
+OpenExp -> (Go only if intentionally starting a scan) -> verified SourceStartUTC -> Acquire=1
 ```
 
 `OpenExp` prepares the experiment and metadata. `Acquire=1` starts data publishing from hot-links. `Close` and `CloseExp` use safe abort/close sequencing and then disconnect local sockets because MASsoft drops file-associated sockets after `-xClose`.
 
 ## Failure Recovery And Data Quality
 
-- **Unresolved history replay:** a new data link can start at the beginning of
-  an existing experiment. Received historical rows get current receipt timestamps
-  and can enter Archiver as apparently live samples. Starting/restarting links,
-  reopening a file, or restarting the IOC must be followed by source-row validation.
-  `DataAge`/`DataRawAge` measure receipt age only, not source age. This release does
-  not add an undocumented seek option or claim to solve replay.
+- **Guarded history replay:** a new data link can start at the beginning of an
+  existing experiment. Old/pre-boundary rows are withheld and counted, not stamped
+  as current measurements. SourceStartUTC must be verified against that exact run.
+  Check DataState, SourceAge, HistoryRows and PublishedRows; receipt age alone is
+  not sufficient. No seek operation is implemented. Long-running experiments may
+  take a long time to catch up, or never catch up if draining is slower than scanning.
 - A transport/parser/reader failure sets `Acquire=0`, `Connected=0`, `Status=Error`
   and `LastError`, and invalidates the intensity PVs. Set the correct file/view,
-  run `OpenExp`, then `Acquire=1` to recover without restarting the IOC.
+  run `OpenExp`, verify/set `SourceStartUTC`, then `Acquire=1` to recover.
 - A command timeout has an unknown hardware outcome. Check MASsoft before
   repeating a hardware command. The IOC does not replay commands or restart scans.
 - Paused or stale intensity readbacks carry an INVALID alarm. `DataAge` tracks
@@ -410,9 +439,11 @@ OpenExp -> Go or RunExp -> Acquire=1 -> Abort/AbortExp if needed -> Close/CloseE
   nonfinite, or ambiguous cells fail visibly rather than shifting mass assignments.
   Negative and zero readings are retained. Unsupported/custom legend formats
   require an explicit parser extension and tests.
-- A snapshot gives all intensities in a row the same IOC receive timestamp.
-  `update_period_s` controls latest-row publication, not lossless delivery of every
-  instrument cycle. A recipe faster than this period can be downsampled.
+- All intensities in a row share its reconstructed source timestamp. The bounded
+  live FIFO preserves eligible rows until publication/expiry, failing on overflow.
+  `update_period_s` controls the drain interval, not guaranteed end-to-end archival
+  delivery. DataRawLine remains a latest-row, receipt-timed diagnostic, not an
+  atomic companion to each MID event in a burst.
 - Changing the selected view/data options requires `Acquire=0`. Opening a file
   resets old channel values; unused channels are zero, not retained from the prior recipe.
 - Shutdown disconnects sockets without stopping the MASsoft scan. Only explicit
@@ -426,9 +457,10 @@ expose this IOC to untrusted networks.
 
 `archiver-pvs.txt` lists all 40 mass/intensity PVs. Archive entries and the JSON
 `archiver` section do not automatically configure the Archiver service or conditional
-sampling. Alarm-aware consumers should also monitor `Acquire`, `Connected`, and
-`DataAge`. The earlier archive verification above predates this release candidate;
-repeat retrieval during commissioning.
+sampling. Also archive quality PVs from `archiver-quality-pvs.txt`, especially
+`DataState`. MID alarm-only updates retain source timestamps and may be ignored
+as duplicates by an Archiver; DataState records the quality-transition timeline.
+The earlier archive verification predates this candidate; repeat retrieval.
 
 ## Development Checks
 

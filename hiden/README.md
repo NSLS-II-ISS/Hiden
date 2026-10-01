@@ -1,7 +1,8 @@
 # Unified IOC: Direct Python
 
 `cap3.py` is the single IOC implementation, with `massoft_client.py` and
-`massoft_protocol.py`. Direct Python and Pixi expose the same 78 PVs, including
+`massoft_protocol.py` and `massoft_timing.py`. Direct Python and Pixi expose the same
+87 PVs (78 original plus 9 source-quality PVs), including
 20 mass/intensity pairs and the previously extended diagnostics. The old IOC
 entry points and `_aj2` client module have been removed. Use `massoft_client.py`
 (with an underscore, not a space) for Python imports.
@@ -10,10 +11,11 @@ For IOC2's Pixi/managed launcher, workstation access, operating commands and
 Archiver retrieval, see the [root README](../README.md). Deploy this whole
 `hiden` directory, not an isolated script. Run exactly one Hiden IOC.
 
-**Release candidate, not unattended-production approval:** new MASsoft data
-links can replay historical rows with current IOC receipt timestamps. Neither
-`DataAge` nor the now-synchronized VM clock proves source freshness. Read the
-[release review](../RELEASE_REVIEW.md) before deployment.
+**rc.3: commissioning candidate, not unattended-production approval.** New links
+can replay historical rows. The IOC now requires a verified `SourceStartUTC`,
+withholds old rows and uses source-derived MID timestamps. Follow the
+[guarded-acquisition trial](../docs/GUARDED_ACQUISITION.md) and
+[release review](../RELEASE_REVIEW.md); DataAge alone does not prove freshness.
 
 ## Direct Python Setup
 
@@ -81,16 +83,21 @@ Important keys:
 - `massoft.retry_s`, `massoft.command_timeout_s`: server wait option and bounded client timeout.
 - `massoft.link_chunk_timeout_s`, `massoft.link_burst_gap_s`: stream read timing.
 - `ioc.default_experiment`, `ioc.default_view`: initial file/view selection, not automatic connection.
-- `ioc.update_period_s`: latest-row publication interval, not guaranteed per-cycle delivery.
+- `ioc.update_period_s`: live FIFO drain interval (up to 64 rows/pass), not guaranteed archival delivery.
 - `ioc.stale_after_s`: receipt silence threshold; set above the longest normal cycle.
-- `ioc.start_links_on_open_exp`: normally zero; opening a link may replay history.
+- `ioc.start_links_on_open_exp`: must be zero; enter the time reference after OpenExp.
 - `ioc.default_data_cycles`, `ioc.default_data_time_fmt`, `ioc.default_data_ms_fmt`: link options.
+- `ioc.max_source_age_s`: default SourceMaxAge=10 seconds; commission for the recipe.
+- `ioc.data_queue_size`: eligible live FIFO capacity, default 256; overflow faults acquisition.
 - `ioc.enable_generic_commands`: defaults to false; leave off during normal operation.
 
 The JSON `epics`/`archiver` sections do not configure OS environment or the
 Archiver service. See [MASsoft VM clock setup](../README.md#massoft-vm-clock)
 for the guarded NTP helper and the verified NSLS-II sources. Clock changes do
 not repair existing archived timestamps or the data-link replay issue.
+
+Keep DataCycles=1 for commissioning; DataMsFmt must be 1. Increasing batch size
+does not select the newest row and can delay delivery of live measurements.
 
 ## Implementation
 
@@ -108,6 +115,12 @@ The client retains the prior public diagnostic/compatibility methods, but not a
 second implementation. Python clients must serialize lifecycle calls themselves;
 the IOC's operation lock provides that serialization for PV operations.
 
+`massoft_timing.SourceGuard` is attached explicitly by the IOC after the operator
+verifies the run origin. Under the client's sample lock it validates elapsed
+counters, clock continuity and age, discards history and queues eligible rows.
+The publisher drains the FIFO with shared source timestamps for each vector.
+Standalone snapshot API users do not automatically receive this freshness guarantee.
+
 ## Controls And Data
 
 All control PVs use `XF:08IDB-SE{RGA:1}:` followed by their suffix:
@@ -120,6 +133,9 @@ All control PVs use `XF:08IDB-SE{RGA:1}:` followed by their suffix:
 - `Connected`, `Status`, `LastError`, `ActiveFile`: state/error diagnostics.
 - `DataAge`, `StatusAge`, `DataRawLine`, `DataRawAge`: receipt/stream diagnostics.
 - `DataCycles`, `DataTimeFmt`, `DataMsFmt`, `RestartLinks`: data-link configuration.
+- `SourceStartUTC`, `SourceMaxAge`: required run origin and source-age eligibility.
+- `DataState`, `SourceTime`, `SourceAge`: publication quality/source-time diagnostics.
+- `HistoryRows`, `QueueDepth`, `DroppedRows`, `PublishedRows`: replay/queue accounting.
 
 Intensity names are `XF:08IDB-SE{RGA:1}P:MID1-I` through `P:MID20-I`;
 mass labels are `XF:08IDB-VA{RGA:1}Mass:MID1` through `Mass:MID20`.
@@ -128,10 +144,15 @@ re-creation of existing archive entries is needed for this consolidation.
 
 Readbacks are read-only. Unused channels are zero. Paused/stale intensities are
 INVALID. A transport/parser failure clears Acquire and requires explicit
-OpenExp/Acquire recovery. After an IOC restart, set ExpName and View again;
+OpenExp/SourceStartUTC/Acquire recovery. After an IOC restart, set ExpName and View again;
 there is no automatic resumption or scan start. Use `caput -c -w 120` for
 lifecycle puts, and inspect LastError: put completion is not hardware success.
 
 Changing View/data options requires Acquire=0 and can open a new replaying
 stream. Acquire=0 by itself leaves healthy links draining and does not abort
 the experiment. See the root README for complete copy-and-paste sequences.
+
+MID alarm-only changes retain the last measurement timestamp to avoid time
+reversal on subsequent delayed source rows. Archive DataState to preserve the
+quality-transition timeline; duplicate-timestamp MID alarms may not be stored.
+Quality PV names are listed in `../archiver-quality-pvs.txt`.

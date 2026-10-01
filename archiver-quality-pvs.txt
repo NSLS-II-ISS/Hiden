@@ -1,0 +1,14 @@
+XF:08IDB-SE{RGA:1}:DataState
+XF:08IDB-SE{RGA:1}:SourceStartUTC
+XF:08IDB-SE{RGA:1}:SourceTime
+XF:08IDB-SE{RGA:1}:SourceAge
+XF:08IDB-SE{RGA:1}:SourceMaxAge
+XF:08IDB-SE{RGA:1}:HistoryRows
+XF:08IDB-SE{RGA:1}:QueueDepth
+XF:08IDB-SE{RGA:1}:DroppedRows
+XF:08IDB-SE{RGA:1}:PublishedRows
+XF:08IDB-SE{RGA:1}:Acquire
+XF:08IDB-SE{RGA:1}:Connected
+XF:08IDB-SE{RGA:1}:LastError
+XF:08IDB-SE{RGA:1}:ActiveFile
+XF:08IDB-SE{RGA:1}:DataAge

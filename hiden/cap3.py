@@ -13,6 +13,7 @@ from caproto import AlarmSeverity, AlarmStatus
 from caproto.server import PVGroup, pvproperty, run, template_arg_parser
 from massoft_client import MASsoftClient, load_runtime_config
 from massoft_protocol import extract_masses
+from massoft_timing import SourceGuard, parse_start_utc
 
 LOG = logging.getLogger(__name__)
 _IOC_CFG = load_runtime_config().get("ioc", {})
@@ -128,7 +129,7 @@ class RGAIOC(PVGroup):
         name="XF:08IDB-SE{{RGA:1}}:Acquire",
         value=0,
         dtype=int,
-        doc="Start/stop PV updates from latest hot-link values (hot-links keep draining in background).",
+        doc="Enable guarded live publication; requires SourceStartUTC. Paused links keep draining.",
     )
 
     connected = pvproperty(
@@ -265,7 +266,7 @@ class RGAIOC(PVGroup):
 
     data_ms_fmt = pvproperty(
         name="XF:08IDB-SE{{RGA:1}}:DataMsFmt",
-        value=1 if int(_ioc_default("default_data_ms_fmt", 0)) else 0,
+        value=1 if int(_ioc_default("default_data_ms_fmt", 1)) else 0,
         dtype=int,
         doc="Data link -m option.",
     )
@@ -294,6 +295,78 @@ class RGAIOC(PVGroup):
         value=-1.0,
         dtype=float,
         doc="Seconds since receipt of the latest raw line, not source measurement age.",
+    )
+
+    source_start = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceStartUTC",
+        value="",
+        dtype=str,
+        max_length=64,
+        doc="Verified run origin with explicit Z/offset. Set AFTER OpenExp; never use current time.",
+    )
+    source_max_age = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceMaxAge",
+        value=float(_ioc_default("max_source_age_s", 10.0)),
+        dtype=float,
+        doc="Maximum source measurement age eligible for live publication, in seconds.",
+    )
+    data_state = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:DataState",
+        value="Disconnected",
+        dtype=str,
+        max_length=32,
+        read_only=True,
+        alarm_group="data_state",
+        doc="Publication quality, independent of MASsoft Status: AwaitingTime/CatchingUp/Live/etc.",
+    )
+    source_time = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceTime",
+        value=0.0,
+        dtype=float,
+        precision=3,
+        read_only=True,
+        alarm_group="source_time",
+        doc="Latest validated received row's source Unix UTC seconds; 0 means unknown.",
+    )
+    source_age = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceAge",
+        value=-1.0,
+        dtype=float,
+        read_only=True,
+        alarm_group="source_age",
+        doc="Now minus SourceTime, including history/paused rows; -1 when unknown.",
+    )
+    history_rows = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:HistoryRows",
+        value=0,
+        dtype=int,
+        read_only=True,
+        alarm_group="history_rows",
+        doc="Rows withheld as too old or before the publication boundary, since link start.",
+    )
+    queue_depth = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:QueueDepth",
+        value=0,
+        dtype=int,
+        read_only=True,
+        alarm_group="queue_depth",
+        doc="Eligible live rows awaiting publication.",
+    )
+    dropped_rows = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:DroppedRows",
+        value=0,
+        dtype=int,
+        read_only=True,
+        alarm_group="dropped_rows",
+        doc="Live queue rows expired/discarded on overflow, since link start; excludes history/pause.",
+    )
+    published_rows = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:PublishedRows",
+        value=0,
+        dtype=int,
+        read_only=True,
+        alarm_group="published_rows",
+        doc="Complete live rows published since OpenExp.",
     )
 
     raw_cmd = pvproperty(
@@ -406,15 +479,28 @@ class RGAIOC(PVGroup):
         self._publishing = False
         self._links_started = False
         self._mass_vals = []
-        self._last_pub_row_ts = self._last_pub_status_ts = 0.0
+        self._last_pub_status_ts = 0.0
         self._data_valid = False
         self._stream_started_at = 0.0
+        self._source_epoch = None
+        self._source_binding = None
+        self._source_floor = max(getattr(self, f"mid{i}").timestamp for i in range(1, MAX_MIDS + 1))
+        self._last_source_published = None
+        self._published_count = 0
+        self._last_raw_ts = 0.0
+        self._queue_capacity = _ioc_default("data_queue_size", 256)
         self._update_period_s = float(_ioc_default("update_period_s", 1.0))
         self._stale_after_s = float(_ioc_default("stale_after_s", 60.0))
         if not math.isfinite(self._update_period_s) or self._update_period_s < 0.05:
             raise ValueError("update_period_s must be finite and >= 0.05")
         if not math.isfinite(self._stale_after_s) or self._stale_after_s <= 0:
             raise ValueError("stale_after_s must be positive and finite")
+        if not math.isfinite(self.source_max_age.value) or self.source_max_age.value <= 0:
+            raise ValueError("max_source_age_s must be positive and finite")
+        if type(self._queue_capacity) is not int or not 1 <= self._queue_capacity <= 100000:
+            raise ValueError("data_queue_size must be an integer in 1..100000")
+        if int(_ioc_default("start_links_on_open_exp", 0)):
+            raise ValueError("Guarded mode requires start_links_on_open_exp=0")
 
     async def _error_text(self, exc):
         await self.last_error.write(str(exc)[:255])
@@ -423,7 +509,28 @@ class RGAIOC(PVGroup):
         self._data_valid = False
         for i in range(1, MAX_MIDS + 1):
             pv = getattr(self, f"mid{i}")
-            await pv.write(pv.value, status=AlarmStatus.COMM, severity=AlarmSeverity.INVALID_ALARM)
+            # Alarm changes must not put receipt time ahead of the next source timestamp.
+            await pv.write(
+                pv.value,
+                verify_value=False,
+                timestamp=pv.timestamp,
+                status=AlarmStatus.COMM,
+                severity=AlarmSeverity.INVALID_ALARM,
+            )
+
+    def _binding(self):
+        return (str(self.client.current_file).casefold(), int(self.view.value))
+
+    async def _clear_source_reference(self, state="AwaitingTime"):
+        self._source_epoch = self._source_binding = None
+        await self.source_start.write("", verify_value=False)
+        await self.data_state.write(state)
+
+    def _require_source_reference(self):
+        if self._source_epoch is None or self._source_binding != self._binding():
+            raise ValueError("Set verified SourceStartUTC after OpenExp/View selection")
+        if not int(self.data_ms_fmt.value):
+            raise ValueError("Guarded publication requires DataMsFmt=1")
 
     async def _fail(self, exc):
         self._publishing = False
@@ -434,6 +541,7 @@ class RGAIOC(PVGroup):
         await self.active_file.write("")
         await self._error_text(exc)
         await self._invalidate()
+        await self._clear_source_reference("Error")
         # A fresh OpenExp is the only reconnection path; never replay Go/Abort.
         await worker(self.client.disconnect)
 
@@ -444,18 +552,32 @@ class RGAIOC(PVGroup):
             value = self._mass_vals[i - 1] if i <= len(self._mass_vals) else 0.0
             await getattr(self, f"mass{i}").write(value)
 
-    async def _reset_readbacks(self):
-        self._last_pub_row_ts = self._last_pub_status_ts = 0.0
+    async def _reset_readbacks(self, *, clear_masses=True):
+        self._last_pub_status_ts = 0.0
+        reset_time = max(time.time(), self._source_floor)
         for i in range(1, MAX_MIDS + 1):
-            await getattr(self, f"mass{i}").write(0.0)
+            if clear_masses:
+                await getattr(self, f"mass{i}").write(0.0)
             await getattr(self, f"mid{i}").write(
-                0.0, status=AlarmStatus.UDF, severity=AlarmSeverity.INVALID_ALARM
+                0.0,
+                verify_value=False,
+                timestamp=reset_time,
+                status=AlarmStatus.UDF,
+                severity=AlarmSeverity.INVALID_ALARM,
             )
+        self._source_floor = reset_time
+        self._last_source_published = None
         self._data_valid = False
         await self.data_age.write(-1.0)
         await self.status_age.write(-1.0)
         await self.data_raw_line.write("")
         await self.data_raw_age.write(-1.0)
+        self._last_raw_ts = 0.0
+        await self.source_time.write(0.0)
+        await self.source_age.write(-1.0)
+        await self.history_rows.write(0)
+        await self.queue_depth.write(0)
+        await self.dropped_rows.write(0)
 
     @open_exp.putter
     @serialized
@@ -469,6 +591,9 @@ class RGAIOC(PVGroup):
         await self.acquire.write(0, verify_value=False)
         await self.connected.write(0)
         await self.status.write("Opening")
+        await self._clear_source_reference()
+        self._published_count = 0
+        await self.published_rows.write(0)
         await self._reset_readbacks()
         await worker(self.client.open_experiment, filename)
         await self._metadata()
@@ -476,18 +601,27 @@ class RGAIOC(PVGroup):
         await self.connected.write(1)
         await self.status.write("Connected")
         await self.last_error.write("")
-        if int(_ioc_default("start_links_on_open_exp", 0)):
-            await self._start_links()
         return 0
 
     async def _start_links(self):
         if not self.client.current_file:
             raise RuntimeError("Set ExpName/View and OpenExp before Acquire")
+        self._require_source_reference()
         if self._links_started:
             self.client.check_links()
             return
         # Refetch metadata on each new stream, including after View changes.
         await self._metadata()
+        guard = SourceGuard(
+            self._source_epoch,
+            max_age=float(self.source_max_age.value),
+            capacity=self._queue_capacity,
+            not_before=self._source_floor,
+            wall=time.time(),
+            monotonic=time.monotonic(),
+        )
+        guard.set_enabled(self._publishing)
+        self.client.configure_timing(guard)
         await worker(self.client.start_status_link, view=int(self.view.value))
         options = dict(
             mid_cycles=int(self.data_cycles.value),
@@ -497,6 +631,7 @@ class RGAIOC(PVGroup):
         await worker(self.client.start_data_link, view=int(self.view.value), **options)
         self._links_started = True
         self._stream_started_at = time.monotonic()
+        await self.data_state.write("CatchingUp" if self._publishing else "Paused")
 
     @acquire.putter
     @serialized
@@ -504,15 +639,39 @@ class RGAIOC(PVGroup):
         if int(value) not in (0, 1):
             raise ValueError("Acquire must be 0 or 1")
         if int(value):
-            await self._start_links()
+            was_publishing = self._publishing
             self._publishing = True
+            try:
+                if self._links_started and not was_publishing:
+                    self._require_source_reference()
+                    self.client.enable_publication(
+                        True, not_before=max(time.time(), self._source_floor)
+                    )
+                await self._start_links()
+            except Exception:
+                self._publishing = was_publishing
+                raise
             await self.last_error.write("")
         else:
             self._publishing = False
+            self.client.enable_publication(False)
             await self._invalidate()
+            if self.connected.value:
+                await self.data_state.write(
+                    "Paused" if self._source_epoch is not None else "AwaitingTime"
+                )
+            elif self.data_state.value != "Error":
+                await self.data_state.write("Disconnected")
         return int(value)
 
     async def _go(self):
+        if self._publishing:
+            raise ValueError("Set Acquire=0 before Go; the new run needs a new SourceStartUTC")
+        await worker(self.client.stop_links)
+        self._links_started = False
+        self.client._reset_cache()
+        await self._clear_source_reference()
+        await self._reset_readbacks()
         await worker(
             self.client.x_go,
             filename=str(self.go_filename.value).strip() or None,
@@ -544,6 +703,7 @@ class RGAIOC(PVGroup):
         await self.connected.write(0)
         await self.status.write("Disconnected")
         await self.active_file.write("")
+        await self._clear_source_reference("Disconnected")
 
     @close.putter
     @serialized
@@ -563,12 +723,11 @@ class RGAIOC(PVGroup):
                 await worker(self.client.stop_links)
                 self._links_started = False
                 self.client._reset_cache()
+                await self._clear_source_reference()
                 await self._reset_readbacks()
             return int(value)
 
     async def _publish_once(self):
-        if self._links_started:
-            self.client.check_links()
         sample = self.client.snapshot()
         now = time.monotonic()
         age = now - sample["row_ts"] if sample["row_ts"] else -1.0
@@ -578,31 +737,120 @@ class RGAIOC(PVGroup):
             await self.status.write(sample["status"][:31])
             self._last_pub_status_ts = sample["status_ts"]
         await self.data_raw_age.write(age)
+        if sample["raw_ts"] > self._last_raw_ts:
+            # This diagnostic remains receipt-timed, including rejected history.
+            await self.data_raw_line.write(sample["raw"][:4095], timestamp=sample["row_wall_ts"])
+            self._last_raw_ts = sample["raw_ts"]
+        timing = sample["timing"]
+        if timing is not None:
+            await self.history_rows.write(timing["history_rows"])
+            await self.queue_depth.write(timing["queue_depth"])
+            await self.dropped_rows.write(timing["dropped_rows"])
+            if timing["latest"] is not None:
+                source = timing["latest"].source_time
+                await self.source_time.write(source)
+                await self.source_age.write(time.time() - source)
+        self.client.check_source_clock()
+        if self._links_started:
+            self.client.check_links()
         if not self._publishing:
             return
+        self._require_source_reference()
         if age > self._stale_after_s or (
             age < 0 and now - self._stream_started_at > self._stale_after_s
         ):
             if self._data_valid:
                 await self._invalidate()
+            await self.data_state.write("Stale")
             await self.last_error.write("Data stale; check MASsoft scan and DataAge")
             return
-        if sample["row_ts"] > self._last_pub_row_ts:
-            row = sample["row"]
-            if len(row) != len(self._mass_vals):
+        for row in self.client.drain_live_rows():
+            self.client.check_source_clock()
+            if (
+                row.source_time <= self._source_floor
+                or time.time() - row.source_time > self.source_max_age.value
+            ):
+                self.client.note_dropped_row()
+                continue
+            if len(row.values) != len(self._mass_vals):
                 raise RuntimeError("Data/legend channel count changed; OpenExp again")
             for i in range(1, MAX_MIDS + 1):
-                value = row[i - 1] if i <= len(row) else 0.0
+                value = row.values[i - 1] if i <= len(row.values) else 0.0
                 await getattr(self, f"mid{i}").write(
                     value,
-                    timestamp=sample["row_wall_ts"],
+                    # Parsed finite values; do not let numeric limit verification
+                    # override the explicitly managed data-quality alarms.
+                    verify_value=False,
+                    timestamp=row.source_time,
                     status=AlarmStatus.NO_ALARM,
                     severity=AlarmSeverity.NO_ALARM,
                 )
-            await self.data_raw_line.write(sample["raw"][:4095], timestamp=sample["row_wall_ts"])
-            self._last_pub_row_ts = sample["row_ts"]
+            self._source_floor = row.source_time
+            self._last_source_published = row.source_time
+            self._published_count += 1
             self._data_valid = True
+        await self.published_rows.write(self._published_count)
+        timing = self.client.snapshot()["timing"]
+        await self.queue_depth.write(timing["queue_depth"])
+        await self.dropped_rows.write(timing["dropped_rows"])
+        if (
+            self._data_valid
+            and self._last_source_published is not None
+            and time.time() - self._last_source_published <= self.source_max_age.value
+        ):
+            await self.data_state.write("Live")
             await self.last_error.write("")
+        else:
+            if self._data_valid:
+                await self._invalidate()
+            if self._last_source_published is None:
+                await self.data_state.write("CatchingUp" if sample["row_ts"] else "Waiting")
+            else:
+                await self.data_state.write("Stale")
+                await self.last_error.write("Source data stale; check SourceAge and SourceMaxAge")
+
+    @source_start.putter
+    async def source_start(self, instance, value):
+        async with self._operation_lock:
+            try:
+                if self._publishing:
+                    raise ValueError("Set Acquire=0 before changing SourceStartUTC")
+                if not self.connected.value or not self.client.current_file:
+                    raise ValueError("OpenExp before setting SourceStartUTC")
+                normalized, epoch = parse_start_utc(str(value))
+                if epoch > time.time() + 1.0:
+                    raise ValueError(
+                        "SourceStartUTC is in the future; verify CSV header/UTC offset"
+                    )
+            except ValueError as exc:
+                await self._error_text(exc)
+                return instance.value
+            try:
+                await worker(self.client.stop_links)
+                self._links_started = False
+                self.client._reset_cache()
+                self._source_epoch, self._source_binding = epoch, self._binding()
+                await self._reset_readbacks(clear_masses=False)
+                await self.data_state.write("Paused")
+                await self.last_error.write("")
+                return normalized
+            except Exception as exc:
+                await self._fail(exc)
+                return ""
+
+    @source_max_age.putter
+    async def source_max_age(self, instance, value):
+        async with self._operation_lock:
+            value = float(value)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("SourceMaxAge must be positive and finite")
+            if self._publishing:
+                raise ValueError("Set Acquire=0 before changing SourceMaxAge")
+            await worker(self.client.stop_links)
+            self._links_started = False
+            self.client._reset_cache()
+            await self._reset_readbacks(clear_masses=False)
+            return value
 
     @status.startup
     async def status(self, instance, async_lib):
@@ -649,12 +897,15 @@ class RGAIOC(PVGroup):
     async def refresh_file(self, instance, value):
         if int(value):
             await self.active_file.write(await worker(self.client.query_filename))
+            if self._source_binding is not None and self._source_binding != self._binding():
+                raise RuntimeError("Active file changed; OpenExp and verify SourceStartUTC")
         return 0
 
     @restart_links.putter
     @serialized
     async def restart_links(self, instance, value):
         if int(value):
+            self._require_source_reference()
             await worker(self.client.stop_links)
             self._links_started = False
             self.client._reset_cache()
@@ -712,6 +963,8 @@ class RGAIOC(PVGroup):
             value = int(value)
             if (boolean and value not in (0, 1)) or (not boolean and not 1 <= value <= 100):
                 raise ValueError("Invalid data format/cycle option")
+            if instance is self.data_ms_fmt and value != 1:
+                raise ValueError("Guarded publication requires DataMsFmt=1")
             if self._publishing:
                 raise ValueError("Set Acquire=0 before changing data options")
             await worker(self.client.stop_links)

@@ -22,7 +22,9 @@
     "start_links_on_open_exp": 0,
     "default_data_cycles": 1,
     "default_data_time_fmt": 0,
-    "default_data_ms_fmt": 0
+    "default_data_ms_fmt": 1,
+    "max_source_age_s": 10.0,
+    "data_queue_size": 256
   },
   "archiver": {
     "sampling_mode": "Monitor",

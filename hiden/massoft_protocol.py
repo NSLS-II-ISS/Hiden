@@ -291,9 +291,18 @@ def extract_masses(legends):
 
 
 def parse_numeric_row(line, *, expected_count=None, include_time=False, include_ms=False):
+    values, _ = parse_data_row(
+        line, expected_count=expected_count, include_time=include_time, include_ms=include_ms
+    )
+    return values
+
+
+def parse_data_row(line, *, expected_count=None, include_time=False, include_ms=False):
+    """Return (MID values, elapsed milliseconds), retaining source timing metadata."""
     # Tab splitting preserves empty data cells. Dropping nonnumeric cells shifts
     # every subsequent mass, creating plausible but scientifically wrong data.
     parts = [p.strip() for p in line.split("\t")] if "\t" in line else line.split()
+    elapsed_ms = None
     has_time = bool(parts and re.fullmatch(r"\d+:\d{2}:\d{2}(?:\.\d+)?", parts[0]))
     if has_time:
         parts = parts[1:]
@@ -307,6 +316,7 @@ def parse_numeric_row(line, *, expected_count=None, include_time=False, include_
                 )
             if not re.fullmatch(r"\d+", parts[0]):
                 raise MASsoftProtocolError("Invalid millisecond counter")
+            elapsed_ms = int(parts[0])
             parts = parts[1:]
         elif include_ms:
             raise MASsoftProtocolError("Missing millisecond counter")
@@ -317,6 +327,7 @@ def parse_numeric_row(line, *, expected_count=None, include_time=False, include_
     elif include_ms:
         if not parts or not re.fullmatch(r"\d+", parts[0]):
             raise MASsoftProtocolError("Missing millisecond counter")
+        elapsed_ms = int(parts[0])
         parts = parts[1:]
     elif has_time:
         raise MASsoftProtocolError("Expected channel count required for optional time columns")
@@ -326,4 +337,4 @@ def parse_numeric_row(line, *, expected_count=None, include_time=False, include_
         raise MASsoftProtocolError("Nonnumeric or empty MID cell") from exc
     if not values or not all(math.isfinite(v) for v in values):
         raise MASsoftProtocolError("MID row is empty or contains nonfinite values")
-    return values
+    return values, elapsed_ms
