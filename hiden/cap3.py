@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import shlex
@@ -13,7 +14,7 @@ from caproto import AlarmSeverity, AlarmStatus
 from caproto.server import PVGroup, pvproperty, run, template_arg_parser
 from massoft_client import MASsoftClient, load_runtime_config
 from massoft_protocol import extract_masses
-from massoft_timing import SourceGuard, parse_start_utc
+from massoft_timing import MASsoftClock, SourceGuard, parse_start_utc
 
 LOG = logging.getLogger(__name__)
 _IOC_CFG = load_runtime_config().get("ioc", {})
@@ -129,7 +130,7 @@ class RGAIOC(PVGroup):
         name="XF:08IDB-SE{{RGA:1}}:Acquire",
         value=0,
         dtype=int,
-        doc="Enable guarded live publication; requires SourceStartUTC. Paused links keep draining.",
+        doc="Enable guarded live publication with manual origin or MASsoft real-time rows.",
     )
 
     connected = pvproperty(
@@ -259,7 +260,10 @@ class RGAIOC(PVGroup):
 
     data_time_fmt = pvproperty(
         name="XF:08IDB-SE{{RGA:1}}:DataTimeFmt",
-        value=1 if int(_ioc_default("default_data_time_fmt", 0)) else 0,
+        value=1
+        if int(_ioc_default("default_source_mode", 0))
+        or int(_ioc_default("default_data_time_fmt", 0))
+        else 0,
         dtype=int,
         doc="Data link -t option.",
     )
@@ -302,7 +306,65 @@ class RGAIOC(PVGroup):
         value="",
         dtype=str,
         max_length=64,
-        doc="Verified run origin with explicit Z/offset. Set AFTER OpenExp; never use current time.",
+        doc="Manual mode only: verified origin with Z/offset after OpenExp. Unused in real-time mode.",
+    )
+    source_mode = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceMode",
+        value=int(_ioc_default("default_source_mode", 0)),
+        dtype=int,
+        doc="0=manual SourceStartUTC + elapsed ms; 1=MASsoft real-time date in each row.",
+    )
+    source_timezone = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceTimezone",
+        value=str(_ioc_default("source_timezone", "America/New_York")),
+        dtype=str,
+        max_length=64,
+        read_only=True,
+        doc="Configured IANA timezone of the MASsoft VM, not the IOC host timezone.",
+    )
+    source_date_order = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceDateOrder",
+        value=str(_ioc_default("source_date_order", "mdy")),
+        dtype=str,
+        max_length=8,
+        read_only=True,
+        doc="Configured MASsoft date order: mdy or dmy. Never guessed from ambiguous dates.",
+    )
+    massoft_time_raw = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:MASsoftTimeRaw",
+        value="",
+        dtype=str,
+        max_length=64,
+        read_only=True,
+        alarm_group="massoft_time_raw",
+        doc="Original date/time text of the last published row; blank in manual-origin mode.",
+    )
+    massoft_milliseconds = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:MASsoftMilliseconds",
+        value=-1.0,
+        dtype=float,
+        precision=0,
+        read_only=True,
+        alarm_group="massoft_milliseconds",
+        doc="Unmodified ms field of the last published row; not assumed fractional seconds.",
+    )
+    source_resolution = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceResolution",
+        value=-1.0,
+        dtype=float,
+        precision=6,
+        read_only=True,
+        alarm_group="source_resolution",
+        doc="Published real-time text resolution in seconds; -1 unknown/manual. Not clock accuracy.",
+    )
+    source_sample = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:SourceSample",
+        value="",
+        dtype=str,
+        max_length=8192,
+        read_only=True,
+        alarm_group="source_sample",
+        doc="One JSON record: file/view, original time/ms, UTC, receipt, masses and published values.",
     )
     source_max_age = pvproperty(
         name="XF:08IDB-SE{{RGA:1}}:SourceMaxAge",
@@ -501,14 +563,26 @@ class RGAIOC(PVGroup):
             raise ValueError("data_queue_size must be an integer in 1..100000")
         if int(_ioc_default("start_links_on_open_exp", 0)):
             raise ValueError("Guarded mode requires start_links_on_open_exp=0")
+        if self.source_mode.value not in (0, 1):
+            raise ValueError("default_source_mode must be 0 or 1")
+        self._row_clock = MASsoftClock(self.source_timezone.value, self.source_date_order.value)
+
+    def _row_metadata_pvs(self):
+        return (
+            self.massoft_time_raw,
+            self.massoft_milliseconds,
+            self.source_resolution,
+            self.source_sample,
+        )
 
     async def _error_text(self, exc):
         await self.last_error.write(str(exc)[:255])
 
     async def _invalidate(self):
         self._data_valid = False
-        for i in range(1, MAX_MIDS + 1):
-            pv = getattr(self, f"mid{i}")
+        for pv in [getattr(self, f"mid{i}") for i in range(1, MAX_MIDS + 1)] + list(
+            self._row_metadata_pvs()
+        ):
             # Alarm changes must not put receipt time ahead of the next source timestamp.
             await pv.write(
                 pv.value,
@@ -521,13 +595,20 @@ class RGAIOC(PVGroup):
     def _binding(self):
         return (str(self.client.current_file).casefold(), int(self.view.value))
 
-    async def _clear_source_reference(self, state="AwaitingTime"):
+    async def _clear_source_reference(self, state=None):
         self._source_epoch = self._source_binding = None
         await self.source_start.write("", verify_value=False)
-        await self.data_state.write(state)
+        await self.data_state.write(
+            state or ("Ready" if self.source_mode.value else "AwaitingTime")
+        )
 
     def _require_source_reference(self):
-        if self._source_epoch is None or self._source_binding != self._binding():
+        if self.source_mode.value:
+            if not int(self.data_time_fmt.value):
+                raise ValueError("MASsoft real-time mode requires DataTimeFmt=1")
+            if self._links_started and self._source_binding != self._binding():
+                raise ValueError("Active file/view changed; OpenExp before Acquire")
+        elif self._source_epoch is None or self._source_binding != self._binding():
             raise ValueError("Set verified SourceStartUTC after OpenExp/View selection")
         if not int(self.data_ms_fmt.value):
             raise ValueError("Guarded publication requires DataMsFmt=1")
@@ -568,6 +649,14 @@ class RGAIOC(PVGroup):
         self._source_floor = reset_time
         self._last_source_published = None
         self._data_valid = False
+        for pv, value in zip(self._row_metadata_pvs(), ("", -1.0, -1.0, "")):
+            await pv.write(
+                value,
+                verify_value=False,
+                timestamp=reset_time,
+                status=AlarmStatus.UDF,
+                severity=AlarmSeverity.INVALID_ALARM,
+            )
         await self.data_age.write(-1.0)
         await self.status_age.write(-1.0)
         await self.data_raw_line.write("")
@@ -619,7 +708,9 @@ class RGAIOC(PVGroup):
             not_before=self._source_floor,
             wall=time.time(),
             monotonic=time.monotonic(),
+            clock=self._row_clock if self.source_mode.value else None,
         )
+        self._source_binding = self._binding()
         guard.set_enabled(self._publishing)
         self.client.configure_timing(guard)
         await worker(self.client.start_status_link, view=int(self.view.value))
@@ -658,7 +749,9 @@ class RGAIOC(PVGroup):
             await self._invalidate()
             if self.connected.value:
                 await self.data_state.write(
-                    "Paused" if self._source_epoch is not None else "AwaitingTime"
+                    "Paused"
+                    if self._source_epoch is not None or self.source_mode.value
+                    else "AwaitingTime"
                 )
             elif self.data_state.value != "Error":
                 await self.data_state.write("Disconnected")
@@ -666,7 +759,7 @@ class RGAIOC(PVGroup):
 
     async def _go(self):
         if self._publishing:
-            raise ValueError("Set Acquire=0 before Go; the new run needs a new SourceStartUTC")
+            raise ValueError("Set Acquire=0 before Go; manual mode then needs a new SourceStartUTC")
         await worker(self.client.stop_links)
         self._links_started = False
         self.client._reset_cache()
@@ -774,12 +867,41 @@ class RGAIOC(PVGroup):
                 continue
             if len(row.values) != len(self._mass_vals):
                 raise RuntimeError("Data/legend channel count changed; OpenExp again")
+            frame = json.dumps(
+                {
+                    "version": 1,
+                    "file": self.client.current_file,
+                    "view": int(self.view.value),
+                    "mode": "MASsoftRealTime" if self.source_mode.value else "ManualOrigin",
+                    "mas_time": row.source_text,
+                    "mas_ms": row.elapsed_ms,
+                    "source_unix": row.source_time,
+                    "resolution_s": row.resolution_s,
+                    "receipt_unix": row.receipt_time,
+                    "masses": self._mass_vals,
+                    "values": row.values,
+                },
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            if len(frame.encode("utf-8")) >= self.source_sample.max_length:
+                raise RuntimeError("SourceSample exceeds PV capacity; no partial row published")
             for i in range(1, MAX_MIDS + 1):
                 value = row.values[i - 1] if i <= len(row.values) else 0.0
                 await getattr(self, f"mid{i}").write(
                     value,
                     # Parsed finite values; do not let numeric limit verification
                     # override the explicitly managed data-quality alarms.
+                    verify_value=False,
+                    timestamp=row.source_time,
+                    status=AlarmStatus.NO_ALARM,
+                    severity=AlarmSeverity.NO_ALARM,
+                )
+            for pv, value in zip(
+                self._row_metadata_pvs(), (row.source_text, row.elapsed_ms, row.resolution_s, frame)
+            ):
+                await pv.write(
+                    value,
                     verify_value=False,
                     timestamp=row.source_time,
                     status=AlarmStatus.NO_ALARM,
@@ -813,6 +935,10 @@ class RGAIOC(PVGroup):
     async def source_start(self, instance, value):
         async with self._operation_lock:
             try:
+                if self.source_mode.value:
+                    raise ValueError(
+                        "SourceStartUTC is unused in MASsoft real-time mode (SourceMode=1)"
+                    )
                 if self._publishing:
                     raise ValueError("Set Acquire=0 before changing SourceStartUTC")
                 if not self.connected.value or not self.client.current_file:
@@ -837,6 +963,27 @@ class RGAIOC(PVGroup):
             except Exception as exc:
                 await self._fail(exc)
                 return ""
+
+    @source_mode.putter
+    async def source_mode(self, instance, value):
+        async with self._operation_lock:
+            value = int(value)
+            if value not in (0, 1):
+                raise ValueError("SourceMode must be 0 (manual) or 1 (MASsoft real time)")
+            if self._publishing:
+                raise ValueError("Set Acquire=0 before changing SourceMode")
+            if value == int(instance.value):
+                return value
+            await worker(self.client.stop_links)
+            self._links_started = False
+            self.client._reset_cache()
+            await self._clear_source_reference("Ready" if value else "AwaitingTime")
+            if value:
+                await self.data_time_fmt.write(1, verify_value=False)
+                await self.data_ms_fmt.write(1, verify_value=False)
+            await self._reset_readbacks(clear_masses=False)
+            await self.last_error.write("")
+            return value
 
     @source_max_age.putter
     async def source_max_age(self, instance, value):
@@ -898,7 +1045,7 @@ class RGAIOC(PVGroup):
         if int(value):
             await self.active_file.write(await worker(self.client.query_filename))
             if self._source_binding is not None and self._source_binding != self._binding():
-                raise RuntimeError("Active file changed; OpenExp and verify SourceStartUTC")
+                raise RuntimeError("Active file changed; OpenExp and verify source-time settings")
         return 0
 
     @restart_links.putter
@@ -965,6 +1112,8 @@ class RGAIOC(PVGroup):
                 raise ValueError("Invalid data format/cycle option")
             if instance is self.data_ms_fmt and value != 1:
                 raise ValueError("Guarded publication requires DataMsFmt=1")
+            if instance is self.data_time_fmt and self.source_mode.value and value != 1:
+                raise ValueError("MASsoft real-time mode requires DataTimeFmt=1")
             if self._publishing:
                 raise ValueError("Set Acquire=0 before changing data options")
             await worker(self.client.stop_links)

@@ -12,3 +12,10 @@ XF:08IDB-SE{RGA:1}:Connected
 XF:08IDB-SE{RGA:1}:LastError
 XF:08IDB-SE{RGA:1}:ActiveFile
 XF:08IDB-SE{RGA:1}:DataAge
+XF:08IDB-SE{RGA:1}:SourceMode
+XF:08IDB-SE{RGA:1}:SourceTimezone
+XF:08IDB-SE{RGA:1}:SourceDateOrder
+XF:08IDB-SE{RGA:1}:MASsoftTimeRaw
+XF:08IDB-SE{RGA:1}:MASsoftMilliseconds
+XF:08IDB-SE{RGA:1}:SourceResolution
+XF:08IDB-SE{RGA:1}:SourceSample

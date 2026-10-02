@@ -27,6 +27,7 @@ from massoft_protocol import (
     parse_data_row,
     parse_legends,
     parse_numeric_row,
+    parse_realtime_row,
     quote_path,
 )
 
@@ -227,15 +228,23 @@ class MASsoftClient:
             cmd += f" -c{int(mid_cycles)} -t{int(include_time)} -m{int(include_ms)}"
         sock.send(cmd, retry_s=self.cfg.retry_s)
 
+        guard = self._timing
+
         def receive(lines):
             for line in lines:
                 # A one-channel zero is a valid measurement, not an error code.
-                row, elapsed_ms = parse_data_row(
-                    line,
-                    expected_count=self._expected_count,
-                    include_time=include_time,
-                    include_ms=include_ms,
-                )
+                source_text = ""
+                if guard is not None and guard.clock is not None:
+                    row, elapsed_ms, source_text = parse_realtime_row(
+                        line, expected_count=self._expected_count
+                    )
+                else:
+                    row, elapsed_ms = parse_data_row(
+                        line,
+                        expected_count=self._expected_count,
+                        include_time=include_time,
+                        include_ms=include_ms,
+                    )
                 with self._latest_lock:
                     self._latest_row = row
                     self._latest_raw_row = line
@@ -249,6 +258,7 @@ class MASsoftClient:
                             elapsed_ms,
                             wall=self._latest_row_wall_ts,
                             monotonic=self._latest_row_ts,
+                            source_text=source_text,
                         )
 
         self._data_link = self._link(sock, receive, "MASsoftDataHotlink")

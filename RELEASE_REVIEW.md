@@ -10,16 +10,51 @@ Guarded-acquisition review date: 2026-10-01. The source-time guard below replace
 receipt-time publication. Earlier commissioning evidence in this document is
 historical and is not evidence that this new mode works on real hardware.
 
+## Tabular Real-Time Extension
+
+An operator's one-shot View 2 response on 2026-10-01 contains a full acquisition
+date/time followed by a millisecond field and ten mass values. Receipt was about
+two hours later than the source date/time: replay is still present. This is
+evidence for the wire format, not production approval of the new reader.
+
+- Added opt-in `SourceMode=1`: parse each row's real date/time with explicit
+  `source_date_order=mdy` and `source_timezone=America/New_York`. No CSV, start-time
+  guess, receipt-time fallback, or automatic control of MASsoft is used.
+- Retained default `SourceMode=0` and View 1; its verified manual origin remains
+  mandatory. Selecting real-time mode enables the required time/ms data fields.
+- Whole-second text stays whole-second. The raw ms field is not assumed to be a
+  fractional second or used to extrapolate timestamps. Fractional text is retained
+  when supplied. DST ambiguity/gaps, malformed/backwards/future dates and distinct
+  rows colliding at one timestamp fail closed. Subsecond recipes may therefore
+  need finer MASsoft time text or independently verified ms semantics before use.
+- Seven additional PVs bring the total to 94. `MASsoftTimeRaw`,
+  `MASsoftMilliseconds`, `SourceResolution` and `SourceSample` match the published
+  row's timestamp. SourceSample carries a coherent JSON record including the
+  file/view, time/ms, ordered masses and values. It does not make separate CA
+  channels atomic or guarantee lossless archiving. LastError/DataState still
+  provide the independent quality-transition timeline.
+- Extended timezone tests and loopback tests cover the observed ten-mass payload,
+  date order, AM/PM, midnight, fractions, DST, history-to-live, pause, reopen,
+  format-change errors and actual CA publication in both modes. No instrument,
+  Windows VM clock, remote IOC or Archiver was modified by these tests.
+- Direct Python now declares `tzdata==2025.3`; the existing Linux Pixi lock already
+  includes conda tzdata 2025c. No dependency resolution change is needed on IOC2.
+
+The [real-time commissioning runbook](docs/REALTIME_ACQUISITION.md) replaces the
+manual CSV step for this mode. Consecutive-row correspondence, whole-second
+resolution, metadata labels, Windows/IOC2 clock health and a representative
+hardware/Archiver soak remain commissioning gates.
+
 ## Production Blockers
 
 **Not approved for unattended production.** Consolidation and successful
 Archiver connectivity are not evidence of measurement freshness.
 
 1. A newly opened MASsoft data link can replay an experiment from the beginning.
-   The IOC now withholds old rows and requires an operator-verified run origin,
-   but the meaning/precision of that origin and elapsed counter must be confirmed
-   against the selected run's CSV and real-time table. A plausible wrong origin
-   can defeat freshness checks. No documented seek/latest operation is implemented.
+   The IOC withholds old rows. Manual mode requires an operator-verified origin;
+   real-time mode requires date/time-bearing rows with verified view mapping,
+   timezone, date order and precision. Incorrect but plausible configuration can
+   defeat freshness checks. No documented seek/latest operation is implemented.
    Long histories may not catch up; use an isolated TEST-prefixed trial first.
 2. A bounded FIFO now replaces latest-only publication, with visible overflow
    failure and expired-row accounting. This is not end-to-end lossless archiving:
@@ -35,6 +70,9 @@ archive timestamps. Do not hide this limitation by filtering negative values,
 guessing a constant clock offset, or marking a connected stream as source-fresh.
 
 ## Guarded Acquisition
+
+The following describes the original manual-origin rc.3 implementation. For the
+opt-in real-time extension, see the section above and its commissioning runbook.
 
 - Added `massoft_timing.py`: strict explicit-zone origin parsing, offline CSV
   header helper, timestamp/age checks, bounded FIFO and fail-latched clock/counter
@@ -107,7 +145,7 @@ exist. All existing 20-channel mass/intensity and control PV names remain.
 Direct Python now exposes the diagnostics previously available only in the
 extended IOC. Generic commissioning operations are still disabled by default.
 
-Intentional changes: source-time reference required, DataMsFmt=1 required,
+Intentional changes: manual reference or real-time rows required, DataMsFmt=1 required,
 Go requires Acquire=0 and clears the reference; readbacks reject external writes; faulted Acquire returns to
 zero; invalid/stale measurements carry alarms; generic RawSend/XSend no longer
 allow hardware-changing commands; missing config fails startup; only asyncio is
@@ -117,7 +155,13 @@ has been added. MID values remain as reported by MASsoft.
 
 ## Validation And Approval
 
-Local rc.3 result: **139 passed, 15 skipped** with Python 3.13.2/caproto 1.3.0
+Local real-time extension result: **178 passed, 15 skipped** with Python
+3.13.2/caproto 1.3.0 on Windows. Ruff lint/format, diff whitespace and Pixi lock
+consistency checks passed. The skips remain the Windows PowerShell 5.1 cases
+blocked by Restricted execution policy. Both timing modes were exercised over
+local Channel Access; hardware/Archiver testing on IOC2 is still required.
+
+Prior manual-origin rc.3 result: **139 passed, 15 skipped** with Python 3.13.2/caproto 1.3.0
 on Windows. Lint, format, Bash syntax and Pixi lock checks passed. Tests used
 loopback only; no instrument, VM clock or Archiver changes were made. In a
 separate read-only check, all ten values and elapsed counters were retained for

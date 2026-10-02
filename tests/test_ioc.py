@@ -1,4 +1,6 @@
 import asyncio
+import json
+import math
 import os
 import queue
 import socket
@@ -8,6 +10,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from cap3 import RGAIOC, worker
@@ -528,7 +531,8 @@ def test_worker_cancellation_waits_for_inflight_command():
     asyncio.run(scenario())
 
 
-def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim):
+@pytest.mark.parametrize("real_time", [False, True])
+def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim, real_time):
     from caproto.sync.client import read, write
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -582,13 +586,21 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim
             with pytest.raises(Exception, match="[Aa]ccess|[Rr]ead|[Ww]rite"):
                 write(value_pv, 123, timeout=2, notify=True)
             control = "TEST:XF:08IDB-SE{RGA:1}:"
+            if real_time:
+                write(control + "View", 2, timeout=3, notify=True)
+                write(control + "SourceMode", 1, timeout=3, notify=True)
             write(control + "OpenExp", 1, timeout=3, notify=True)
             assert read(control + "Connected", timeout=2).data[0] == 1
             origin = datetime.fromtimestamp(sim.run_start, timezone.utc).isoformat()
-            write(control + "SourceStartUTC", origin, timeout=3, notify=True)
+            if not real_time:
+                write(control + "SourceStartUTC", origin, timeout=3, notify=True)
             write(control + "Acquire", 1, timeout=3, notify=True)
             assert read(control + "Acquire", timeout=2).data[0] == 1
-            sim.data_rows.put(scripted_row(sim, 1000, 123))
+            sim.data_rows.put(
+                realtime_row(sim, sim.run_start + 1, 1000, 123)
+                if real_time
+                else scripted_row(sim, 1000, 123)
+            )
             for _ in range(50):
                 if read(control + "HistoryRows", timeout=2).data[0] == 1:
                     break
@@ -600,7 +612,12 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim
             assert result.metadata.severity == AlarmSeverity.INVALID_ALARM
             assert read(control + "PublishedRows", timeout=2).data[0] == 0
             elapsed = int((time.time() - sim.run_start) * 1000) + 5
-            sim.data_rows.put(scripted_row(sim, elapsed, -5.6e-9))
+            source = sim.run_start + elapsed / 1000
+            sim.data_rows.put(
+                realtime_row(sim, source, elapsed, -5.6e-9)
+                if real_time
+                else scripted_row(sim, elapsed, -5.6e-9)
+            )
             for _ in range(50):
                 result = read(value_pv, data_type="time", timeout=2)
                 if result.metadata.severity == AlarmSeverity.NO_ALARM:
@@ -615,6 +632,14 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim
                 rel=0,
             )
             assert read(control + "PublishedRows", timeout=2).data[0] == 1
+            record = read(control + "SourceSample", data_type="time", timeout=2)
+            frame = json.loads(bytes(record.data).rstrip(b"\0").decode())
+            assert frame["mas_ms"] == elapsed
+            assert frame["values"] == [-5.6e-9] * 20
+            assert frame["mode"] == ("MASsoftRealTime" if real_time else "ManualOrigin")
+            assert record.metadata.timestamp == pytest.approx(
+                result.metadata.timestamp, abs=1e-6, rel=0
+            )
             with pytest.raises(Exception, match="[Aa]ccess|[Rr]ead|[Ww]rite"):
                 write(control + "SourceTime", 0, timeout=2, notify=True)
             assert not any(
@@ -623,3 +648,148 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim
         finally:
             proc.terminate()
             proc.wait(timeout=10)
+
+
+def realtime_row(sim, epoch, milliseconds, value, *, whole_seconds=False):
+    date = datetime.fromtimestamp(epoch, ZoneInfo("America/New_York"))
+    text = date.strftime("%m/%d/%Y %I:%M:%S" + ("" if whole_seconds else ".%f") + " %p")
+    count = len([label for label in sim.legends if "mass" in label.lower()])
+    return text + f"\t{milliseconds}\t" + "\t".join([str(value)] * count)
+
+
+async def open_realtime(ioc):
+    await ioc.view.write(2)
+    await ioc.source_mode.write(1)
+    await ioc.open_exp.write(1)
+    assert ioc.source_start.value == ""
+    assert ioc.data_time_fmt.value == 1
+    assert ioc.data_ms_fmt.value == 1
+    assert ioc.data_state.value == "Ready"
+    await ioc.acquire.write(1)
+    assert ioc.acquire.value == 1, ioc.last_error.value
+
+
+def test_realtime_no_csv_replay_then_whole_second_live_with_matched_metadata(ioc, sim):
+    sim.data_rows = queue.Queue()
+    sim.legends = ["Real time", "ms", "Scan 9 : mass 40.00", "Scan 1 : mass 2.00"]
+
+    async def scenario():
+        await open_realtime(ioc)
+        assert ioc.mass1.value == 40
+        assert ioc.mass2.value == 2
+        assert any(cmd == "-lData -v2 -c1 -t1 -m1 -d0" for _, cmd in sim.commands)
+        sim.data_rows.put(realtime_row(sim, time.time() - 3600, 43, 123, whole_seconds=True))
+        await wait_for_counter(ioc, 43)
+        await ioc._publish_once()
+        assert ioc.history_rows.value == 1
+        assert ioc.published_rows.value == 0
+        assert ioc.source_sample.value == ""
+        assert ioc.source_age.value > 3500
+        assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
+        stamp = math.floor(time.time()) + 1
+        sim.data_rows.put(realtime_row(sim, stamp, 2347, -5.6e-9, whole_seconds=True))
+        await publish_when_ready(ioc)
+        assert ioc.data_state.value == "Live"
+        assert ioc.mid1.timestamp == stamp
+        assert ioc.mid1.value == -5.6e-9
+        assert ioc.massoft_milliseconds.value == 2347
+        assert ioc.source_resolution.value == 1
+        assert ioc.source_start.value == ""
+        frame = json.loads(ioc.source_sample.value)
+        assert frame["masses"] == [40, 2]
+        assert frame["values"] == [-5.6e-9, -5.6e-9]
+        assert frame["source_unix"] == stamp
+        assert frame["file"] == ioc.active_file.value
+        assert frame["view"] == 2
+        assert frame["mas_time"] == ioc.massoft_time_raw.value
+        for pv in ioc._row_metadata_pvs():
+            assert pv.timestamp == ioc.mid1.timestamp
+            assert pv.alarm.severity == AlarmSeverity.NO_ALARM
+        # While paused, diagnostics follow the stream but the published frame must not.
+        await ioc.acquire.write(0)
+        sim.data_rows.put(realtime_row(sim, stamp + 0.05, 2400, 1e-9))
+        await wait_for_counter(ioc, 2400)
+        await ioc._publish_once()
+        assert json.loads(ioc.source_sample.value) == frame
+        assert ioc.source_sample.alarm.severity == AlarmSeverity.INVALID_ALARM
+        assert ioc.source_time.value > stamp
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+def test_real_time_mode_controls_and_switching_back_require_explicit_reference(ioc, sim):
+    sim.data_rows = queue.Queue()
+
+    async def scenario():
+        await open_realtime(ioc)
+        with pytest.raises(ValueError, match="Acquire=0"):
+            await ioc.source_mode.write(0)
+        await ioc.source_start.write("2026-10-01T19:51:41Z")
+        assert ioc.source_start.value == ""
+        assert "unused" in ioc.last_error.value
+        await ioc.acquire.write(0)
+        with pytest.raises(ValueError, match="DataTimeFmt"):
+            await ioc.data_time_fmt.write(0)
+        await ioc.source_mode.write(0)
+        assert ioc.data_state.value == "AwaitingTime"
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 0
+        assert "SourceStartUTC" in ioc.last_error.value
+        with pytest.raises(ValueError, match="SourceMode"):
+            await ioc.source_mode.write(2)
+
+    asyncio.run(scenario())
+
+
+def test_real_time_view_changed_to_elapsed_fails_without_publishing(ioc, sim):
+    sim.data_rows = queue.Queue()
+
+    async def scenario():
+        await open_realtime(ioc)
+        sim.data_rows.put(scripted_row(sim, 43, 123))
+        await wait_until(lambda: not ioc.client._data_link.alive)
+        try:
+            await ioc._publish_once()
+        except Exception as exc:
+            await ioc._fail(exc)
+        assert ioc.acquire.value == 0
+        assert ioc.published_rows.value == 0
+        assert ioc.data_state.value == "Error"
+        assert "date/time" in ioc.last_error.value
+        assert ioc.source_sample.value == ""
+        assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
+
+    asyncio.run(scenario())
+
+
+def test_real_time_reopen_needs_no_origin_but_filters_replayed_rows_again(ioc, sim):
+    sim.data_rows = queue.Queue()
+
+    async def scenario():
+        await open_realtime(ioc)
+        stamp = time.time() + 0.01
+        sim.data_rows.put(realtime_row(sim, stamp, 43, 1e-9))
+        await publish_when_ready(ioc)
+        first_stamp = ioc.mid1.timestamp
+        await ioc.acquire.write(0)
+        await ioc.open_exp.write(1)
+        assert ioc.source_start.value == ""
+        assert ioc.source_sample.value == ""
+        assert ioc.data_state.value == "Ready"
+        # The old simulator handler may still be waiting on its captured queue
+        # until a send detects EOF. Give the reopened connection its own stream.
+        sim.data_rows = queue.Queue()
+        await ioc.acquire.write(1)
+        sim.data_rows.put(realtime_row(sim, stamp, 43, 1e-9))
+        await wait_for_counter(ioc, 43)
+        await ioc._publish_once()
+        assert ioc.published_rows.value == 0
+        assert ioc.history_rows.value == 1
+        sim.data_rows.put(realtime_row(sim, time.time() + 0.01, 12, 2e-9))
+        await publish_when_ready(ioc)
+        assert ioc.published_rows.value == 1
+        assert ioc.mid1.timestamp > first_stamp
+        assert ioc.source_sample.alarm.severity == AlarmSeverity.NO_ALARM
+
+    asyncio.run(scenario())

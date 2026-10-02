@@ -270,8 +270,8 @@ def extract_masses(legends):
     start = 0
     # MASsoft can prepend these time columns to its legends response. Only
     # consume the known leading prefix; never discard arbitrary/interleaved cells.
-    for time_label in ("elapsed time", "time (ms)"):
-        if start < len(labels) and " ".join(labels[start].split()).casefold() == time_label:
+    for time_labels in (("elapsed time", "real time"), ("time (ms)", "ms")):
+        if start < len(labels) and " ".join(labels[start].split()).casefold() in time_labels:
             start += 1
     masses = []
     for legend in labels[start:]:
@@ -338,3 +338,22 @@ def parse_data_row(line, *, expected_count=None, include_time=False, include_ms=
     if not values or not all(math.isfinite(v) for v in values):
         raise MASsoftProtocolError("MID row is empty or contains nonfinite values")
     return values, elapsed_ms
+
+
+def parse_realtime_row(line, *, expected_count):
+    """Preserve the tabular date/time and ms fields without guessing their relationship."""
+    if "\t" not in line:
+        raise MASsoftProtocolError("Real-time rows require tab-separated date/time, ms and masses")
+    parts = line.split("\t")
+    if len(parts) != expected_count + 2:
+        raise MASsoftProtocolError(f"Expected date/time, ms and {expected_count} MID values")
+    if not re.fullmatch(r"\d+", parts[1].strip()):
+        raise MASsoftProtocolError("Missing or invalid MASsoft millisecond field")
+    time_text, data = line.split("\t", 1)
+    time_text = time_text.strip()
+    if not time_text or "/" not in time_text:
+        raise MASsoftProtocolError(
+            "Missing MASsoft date/time; select Real Time in the tabular view"
+        )
+    values, milliseconds = parse_data_row(data, expected_count=expected_count, include_ms=True)
+    return values, milliseconds, time_text

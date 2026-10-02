@@ -2,7 +2,7 @@
 
 `cap3.py` is the single IOC implementation, with `massoft_client.py` and
 `massoft_protocol.py` and `massoft_timing.py`. Direct Python and Pixi expose the same
-87 PVs (78 original plus 9 source-quality PVs), including
+94 PVs (78 original plus 16 timing/quality PVs), including
 20 mass/intensity pairs and the previously extended diagnostics. The old IOC
 entry points and `_aj2` client module have been removed. Use `massoft_client.py`
 (with an underscore, not a space) for Python imports.
@@ -12,8 +12,11 @@ Archiver retrieval, see the [root README](../README.md). Deploy this whole
 `hiden` directory, not an isolated script. Run exactly one Hiden IOC.
 
 **rc.3: commissioning candidate, not unattended-production approval.** New links
-can replay historical rows. The IOC now requires a verified `SourceStartUTC`,
-withholds old rows and uses source-derived MID timestamps. Follow the
+can replay historical rows. The IOC withholds old rows and uses source-derived
+MID timestamps. Opt-in `SourceMode=1` uses tabular Real Time rows directly, without
+per-run CSV export or origin entry: follow the
+[real-time trial](../docs/REALTIME_ACQUISITION.md). The default manual mode still
+requires a verified `SourceStartUTC`. Also see the
 [guarded-acquisition trial](../docs/GUARDED_ACQUISITION.md) and
 [release review](../RELEASE_REVIEW.md); DataAge alone does not prove freshness.
 
@@ -133,7 +136,11 @@ All control PVs use `XF:08IDB-SE{RGA:1}:` followed by their suffix:
 - `Connected`, `Status`, `LastError`, `ActiveFile`: state/error diagnostics.
 - `DataAge`, `StatusAge`, `DataRawLine`, `DataRawAge`: receipt/stream diagnostics.
 - `DataCycles`, `DataTimeFmt`, `DataMsFmt`, `RestartLinks`: data-link configuration.
-- `SourceStartUTC`, `SourceMaxAge`: required run origin and source-age eligibility.
+- `SourceMode`: 0=manual origin (default), 1=MASsoft tabular real-time rows.
+- `SourceStartUTC`, `SourceMaxAge`: manual-mode origin and source-age eligibility.
+- `SourceTimezone`, `SourceDateOrder`: read-only site configuration for MASsoft dates.
+- `MASsoftTimeRaw`, `MASsoftMilliseconds`, `SourceResolution`: original published-row timing.
+- `SourceSample`: one JSON measurement record with file/view, time/ms, ordered masses and values.
 - `DataState`, `SourceTime`, `SourceAge`: publication quality/source-time diagnostics.
 - `HistoryRows`, `QueueDepth`, `DroppedRows`, `PublishedRows`: replay/queue accounting.
 
@@ -144,7 +151,8 @@ re-creation of existing archive entries is needed for this consolidation.
 
 Readbacks are read-only. Unused channels are zero. Paused/stale intensities are
 INVALID. A transport/parser failure clears Acquire and requires explicit
-OpenExp/SourceStartUTC/Acquire recovery. After an IOC restart, set ExpName and View again;
+OpenExp/time-settings/Acquire recovery (SourceStartUTC only in manual mode).
+After an IOC restart, set ExpName, View and SourceMode again;
 there is no automatic resumption or scan start. Use `caput -c -w 120` for
 lifecycle puts, and inspect LastError: put completion is not hardware success.
 

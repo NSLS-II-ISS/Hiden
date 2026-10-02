@@ -5,15 +5,16 @@ One IOC, two ways to launch it: **`hiden/cap3.py`** uses
 Direct-Python setup and implementation notes are in `hiden/README.md`.
 
 Release candidate: **1.0.0-rc.3**, **not yet approved for unattended production**.
-Guarded acquisition now requires an operator-verified `SourceStartUTC`, withholds
-historical replay, and timestamps eligible MID rows from run start plus elapsed
-milliseconds. A small `DataAge` still means receipt freshness, not measurement
-freshness. Follow the [isolated commissioning procedure](docs/GUARDED_ACQUISITION.md)
-before using production PV names. See `RELEASE_REVIEW.md` for outstanding gates.
+Guarded acquisition withholds historical replay. The opt-in **MASsoft real-time
+mode** reads acquisition date/time from tabular View 2, without a per-run CSV or
+manual origin. Follow the [real-time trial](docs/REALTIME_ACQUISITION.md) first.
+The original [manual-origin mode](docs/GUARDED_ACQUISITION.md) remains the default.
+A small `DataAge` means receipt freshness, not measurement freshness. Neither
+mode seeks past history or repairs old archive entries. See `RELEASE_REVIEW.md`.
 
 ## Project Layout And Migration
 
-- `hiden/cap3.py`: 87 PVs (78 existing + 9 source-quality PVs), 20 MID/mass pairs.
+- `hiden/cap3.py`: 94 PVs (78 existing + 16 timing/quality PVs), 20 MID/mass pairs.
 - `hiden/massoft_client.py`: unified command, status, data and diagnostic client API.
 - `hiden/massoft_protocol.py`: shared configuration, CRLF transport and strict parsing.
 - `hiden/massoft_timing.py`: source-time guard, bounded FIFO and offline CSV-origin helper.
@@ -30,7 +31,8 @@ to `cap3.py` and imports to `massoft_client`. Pixi and `st.cmd` use the new entr
 point automatically. All former extended PVs are available in direct Python too;
 commissioning commands remain disabled by default. Existing PV names, types and
 access permissions remain. `DataMsFmt` now defaults to 1 and cannot be disabled;
-`Acquire=1` requires a verified time reference after `OpenExp`.
+`Acquire=1` requires either a verified manual reference after `OpenExp`, or
+`SourceMode=1` with date/time-bearing tabular rows and configured VM timezone.
 
 Deploy the complete `hiden` directory. Stop the previous Hiden IOC before starting
 the new one; do not run duplicate PV servers. Historical code remains in Git.
@@ -259,6 +261,10 @@ Use `dataRetrievalURL` for samples, not the separate `retrievalURL` ending in `/
 
 ## Operating Sequence
 
+For **View 2 / Real Time / no CSV**, use
+[MASsoft Tabular Real-Time Acquisition](docs/REALTIME_ACQUISITION.md).
+The following sequence is for **manual-origin mode (`SourceMode=0`)**.
+
 **For the first rc.3 trial, use the TEST-prefixed procedure in
 [Guarded Live Acquisition](docs/GUARDED_ACQUISITION.md).** The commands below are
 for the normal PV names after validation. Do not start two Hiden instances.
@@ -268,6 +274,7 @@ Open the experiment template:
 ```bash
 caput -S XF:08IDB-SE{RGA:1}:ExpName "file56.exp"
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:Acquire' 0
+caput -c -w 120 'XF:08IDB-SE{RGA:1}:SourceMode' 0
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:View' 1
 caput -c -w 120 'XF:08IDB-SE{RGA:1}:OpenExp' 1
 caget XF:08IDB-SE{RGA:1}:Connected
@@ -410,7 +417,8 @@ The pixi IOC publishes MID intensity and mass readbacks from `MID1` through `MID
 The intended lifecycle is:
 
 ```text
-OpenExp -> (Go only if intentionally starting a scan) -> verified SourceStartUTC -> Acquire=1
+Manual mode: OpenExp -> (optional intentional Go) -> verified SourceStartUTC -> Acquire=1
+Real-time mode: select tabular View + SourceMode=1 -> OpenExp -> Acquire=1
 ```
 
 `OpenExp` prepares the experiment and metadata. `Acquire=1` starts data publishing from hot-links. `Close` and `CloseExp` use safe abort/close sequencing and then disconnect local sockets because MASsoft drops file-associated sockets after `-xClose`.
@@ -419,13 +427,15 @@ OpenExp -> (Go only if intentionally starting a scan) -> verified SourceStartUTC
 
 - **Guarded history replay:** a new data link can start at the beginning of an
   existing experiment. Old/pre-boundary rows are withheld and counted, not stamped
-  as current measurements. SourceStartUTC must be verified against that exact run.
+  as current measurements. In manual mode SourceStartUTC must be verified against
+  that exact run; real-time mode uses the per-row acquisition date/time instead.
   Check DataState, SourceAge, HistoryRows and PublishedRows; receipt age alone is
   not sufficient. No seek operation is implemented. Long-running experiments may
   take a long time to catch up, or never catch up if draining is slower than scanning.
 - A transport/parser/reader failure sets `Acquire=0`, `Connected=0`, `Status=Error`
   and `LastError`, and invalidates the intensity PVs. Set the correct file/view,
-  run `OpenExp`, verify/set `SourceStartUTC`, then `Acquire=1` to recover.
+  run `OpenExp`, verify time settings (set `SourceStartUTC` only in manual mode),
+  then `Acquire=1` to recover.
 - A command timeout has an unknown hardware outcome. Check MASsoft before
   repeating a hardware command. The IOC does not replay commands or restart scans.
 - Paused or stale intensity readbacks carry an INVALID alarm. `DataAge` tracks
@@ -433,7 +443,7 @@ OpenExp -> (Go only if intentionally starting a scan) -> verified SourceStartUTC
   `ioc.stale_after_s=60`; set it above the longest expected MID cycle plus margin.
   A silent stream produces a stale-data warning, not an automatic abort/reconnect.
 - MID views must contain 1..20 species legends, either `mass <number>` or
-  `Scan <index> : mass <number>`. Optional leading `Elapsed time` and `Time (ms)`
+  `Scan <index> : mass <number>`. Optional leading `Elapsed time`/`Real time` and `Time (ms)`/`ms`
   headers describe time metadata, not extra MID channels. Masses retain their
   response-column order, regardless of the scan indices. Missing, malformed,
   nonfinite, or ambiguous cells fail visibly rather than shifting mass assignments.

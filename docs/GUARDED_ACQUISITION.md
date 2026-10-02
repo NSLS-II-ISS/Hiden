@@ -1,5 +1,9 @@
 # Guarded Live Acquisition (rc.3)
 
+This page describes **manual-origin mode (`SourceMode=0`)**, retained as the
+default. For automatic timing from tabular Real Time rows, with no per-run CSV,
+see [MASsoft Tabular Real-Time Acquisition](REALTIME_ACQUISITION.md).
+
 This is a commissioning candidate, not unattended-production approval. It does
 not seek to MASsoft's latest cycle or repair old archive entries. It stops old
 rows being published as current measurements, **provided the operator supplies
@@ -103,6 +107,7 @@ export EPICS_CA_REPEATER_PORT=5065
 
 p='TEST:XF:08IDB-SE{RGA:1}:'
 caput -c -w 120 "${p}Acquire" 0
+caput -c -w 120 "${p}SourceMode" 0
 read -r -p 'MASsoft experiment filename (relative to configured experiment directory): ' experiment
 caput -S "${p}ExpName" "$experiment"
 caput -c -w 120 "${p}View" 1

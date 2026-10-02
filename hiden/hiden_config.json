@@ -13,6 +13,9 @@
   "ioc": {
     "default_experiment": "file56.exp",
     "default_view": 1,
+    "default_source_mode": 0,
+    "source_timezone": "America/New_York",
+    "source_date_order": "mdy",
     "update_period_s": 1.0,
     "stale_after_s": 60.0,
     "enable_generic_commands": false,

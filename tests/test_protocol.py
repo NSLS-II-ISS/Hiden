@@ -61,7 +61,15 @@ def test_single_zero_and_legends():
 
 
 @pytest.mark.parametrize(
-    "time_legends", [[], ["Elapsed time"], ["Time (ms)"], ["Elapsed time", "Time (ms)"]]
+    "time_legends",
+    [
+        [],
+        ["Elapsed time"],
+        ["Time (ms)"],
+        ["Elapsed time", "Time (ms)"],
+        ["Real time", "ms"],
+        ["Real time", "Time (ms)"],
+    ],
 )
 def test_scan_legends_ignore_only_leading_time_metadata(time_legends):
     # Keep wire order, not the numeric Scan ID order.
@@ -83,6 +91,8 @@ def test_quoted_historical_legends_and_twenty_mass_limit():
     [
         ["Elapsed time", "Time (ms)"],
         ["Elapsed time", "Elapsed time", "mass 2"],
+        ["Real time", "Elapsed time", "mass 2"],
+        ["ms", "Real time", "mass 2"],
         ["Time (ms)", "Elapsed time", "mass 2"],
         ["mass 2", "Time (ms)", "mass 40"],
         ["mass 2", "Elapsed time"],

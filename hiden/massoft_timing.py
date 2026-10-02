@@ -10,8 +10,64 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from massoft_protocol import MASsoftProtocolError
+
+
+class MASsoftClock:
+    """Decode local table dates independently of the IOC OS locale and timezone.
+
+    The date/time text is the only absolute clock input. The separate ms field
+    is deliberately NOT appended as a fraction or used to infer a run origin.
+    """
+
+    def __init__(self, timezone_name, date_order):
+        if date_order not in ("mdy", "dmy"):
+            raise ValueError("source_date_order must be mdy or dmy")
+        self.date_order = date_order
+        try:
+            self.zone = ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Invalid source_timezone or missing tzdata timezone database") from exc
+
+    def parse(self, text):
+        match = re.fullmatch(
+            r"(\d{1,2})/(\d{1,2})/(\d{4}) +(\d{1,2}):(\d{2}):(\d{2})"
+            r"(?:\.(\d{1,6}))?(?: +(AM|PM))?",
+            text,
+            re.IGNORECASE,
+        )
+        if match is None:
+            raise MASsoftProtocolError("Invalid MASsoft date/time; select Real Time in the table")
+        first, second, year, hour, minute, seconds = map(int, match.group(1, 2, 3, 4, 5, 6))
+        month, day = (first, second) if self.date_order == "mdy" else (second, first)
+        fraction, ampm = match.group(7, 8)
+        if ampm:
+            if not 1 <= hour <= 12:
+                raise MASsoftProtocolError("Invalid MASsoft 12-hour clock")
+            hour = hour % 12 + (12 if ampm.upper() == "PM" else 0)
+        try:
+            local = datetime(
+                year, month, day, hour, minute, seconds, int((fraction or "").ljust(6, "0"))
+            )
+        except ValueError as exc:
+            raise MASsoftProtocolError("Invalid MASsoft calendar date/time") from exc
+        # Round-tripping rejects spring-forward gaps; two distinct valid epochs
+        # indicate a fall-back ambiguity. Never choose a DST fold silently.
+        candidates = set()
+        for fold in (0, 1):
+            epoch = local.replace(tzinfo=self.zone, fold=fold).timestamp()
+            if datetime.fromtimestamp(epoch, self.zone).replace(tzinfo=None) == local:
+                candidates.add(epoch)
+        if len(candidates) != 1:
+            raise MASsoftProtocolError(
+                "Ambiguous or nonexistent MASsoft local time (DST transition)"
+            )
+        epoch = candidates.pop()
+        if epoch <= 0:
+            raise MASsoftProtocolError("MASsoft date/time must be after the Unix epoch")
+        return epoch, 10.0 ** -len(fraction) if fraction else 1.0
 
 
 def parse_start_utc(value: str) -> tuple[str, float]:
@@ -38,6 +94,8 @@ class TimedRow:
     source_time: float
     receipt_time: float
     receipt_monotonic: float
+    source_text: str = ""
+    resolution_s: float = -1.0
 
 
 class SourceGuard:
@@ -57,9 +115,12 @@ class SourceGuard:
         wall,
         monotonic,
         clock_tolerance=1.0,
+        clock=None,
     ):
-        if not math.isfinite(start) or start <= 0:
+        if clock is None and (start is None or not math.isfinite(start) or start <= 0):
             raise ValueError("Invalid source start timestamp")
+        if clock is not None and (not isinstance(clock, MASsoftClock) or start is not None):
+            raise ValueError("Real-time mode uses a MASsoftClock, not a manual run origin")
         if not math.isfinite(max_age) or max_age <= 0:
             raise ValueError("SourceMaxAge must be positive and finite")
         if type(capacity) is not int or not 1 <= capacity <= 100000:
@@ -70,6 +131,7 @@ class SourceGuard:
         ):
             raise ValueError("Invalid clock reference or tolerance")
         self.start, self.max_age, self.capacity = start, max_age, capacity
+        self.clock = clock
         self.not_before = not_before
         self.clock_tolerance = clock_tolerance
         self._clock_offset = wall - monotonic
@@ -90,7 +152,7 @@ class SourceGuard:
         if not math.isfinite(wall) or not math.isfinite(monotonic):
             self._fail("Invalid IOC clock reading")
         if abs((wall - monotonic) - self._clock_offset) > self.clock_tolerance:
-            self._fail("IOC clock stepped; reopen and verify SourceStartUTC")
+            self._fail("IOC clock stepped; reopen and verify source-time settings")
 
     def set_enabled(self, enabled, *, not_before=None):
         self.enabled = bool(enabled)
@@ -98,18 +160,36 @@ class SourceGuard:
         if not_before is not None:
             self.not_before = max(self.not_before, not_before)
 
-    def push(self, values, raw, elapsed_ms, *, wall, monotonic):
+    def push(self, values, raw, elapsed_ms, *, wall, monotonic, source_text=""):
         self.check_clock(wall, monotonic)
         if type(elapsed_ms) is not int or not 0 <= elapsed_ms <= 2**53:
-            self._fail("Missing or invalid elapsed milliseconds; DataMsFmt=1 is required")
-        source = self.start + elapsed_ms / 1000.0
-        row = TimedRow(tuple(values), raw, elapsed_ms, source, wall, monotonic)
+            self._fail("Missing or invalid milliseconds; DataMsFmt=1 is required")
+        if self.clock is None:
+            source, resolution = self.start + elapsed_ms / 1000.0, -1.0
+        else:
+            try:
+                source, resolution = self.clock.parse(source_text)
+            except MASsoftProtocolError as exc:
+                self._fail(str(exc))
+        row = TimedRow(
+            tuple(values), raw, elapsed_ms, source, wall, monotonic, source_text, resolution
+        )
         if source > wall + self.clock_tolerance:
-            self._fail("Source timestamp is in the future; verify run origin and VM clock")
+            self._fail("Source timestamp is in the future; verify time settings and VM clock")
         if self.latest is not None:
-            if elapsed_ms < self.latest.elapsed_ms:
+            if self.clock is not None:
+                if source < self.latest.source_time:
+                    self._fail("MASsoft date/time moved backwards; check VM clock and experiment")
+                if source == self.latest.source_time:
+                    if row.values == self.latest.values and elapsed_ms == self.latest.elapsed_ms:
+                        self.duplicates += 1
+                        return
+                    self._fail(
+                        "Distinct rows share one MASsoft timestamp; time resolution is insufficient"
+                    )
+            elif elapsed_ms < self.latest.elapsed_ms:
                 self._fail("Elapsed counter reset or moved backwards; reopen and verify run origin")
-            if elapsed_ms == self.latest.elapsed_ms:
+            elif elapsed_ms == self.latest.elapsed_ms:
                 if row.values != self.latest.values:
                     self._fail("Different measurements share one elapsed counter")
                 self.duplicates += 1
