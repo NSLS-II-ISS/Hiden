@@ -1,8 +1,9 @@
 # Unified IOC: Direct Python
 
 `cap3.py` is the single IOC implementation, with `massoft_client.py` and
-`massoft_protocol.py` and `massoft_timing.py`. Direct Python and Pixi expose the same
-94 PVs (78 original plus 16 timing/quality PVs), including
+`massoft_protocol.py`, `massoft_timing.py` and `massoft_start_probe.py`.
+Direct Python and Pixi expose the same
+99 PVs (78 original, 16 timing/quality and 5 trial PVs), including
 20 mass/intensity pairs and the previously extended diagnostics. The old IOC
 entry points and `_aj2` client module have been removed. Use `massoft_client.py`
 (with an underscore, not a space) for Python imports.
@@ -19,6 +20,12 @@ per-run CSV export or origin entry: follow the
 requires a verified `SourceStartUTC`. Also see the
 [guarded-acquisition trial](../docs/GUARDED_ACQUISITION.md) and
 [release review](../RELEASE_REVIEW.md); DataAge alone does not prove freshness.
+
+An opt-in [status timing trial](../docs/STATUS_TIMING_TRIAL.md) observes a manually
+started experiment before normal acquisition, saves the evidence automatically,
+and never changes production timestamps. Start it with TimingArm only after
+OpenExp; merely starting the IOC does not open extra sockets. No CSV or remote
+trigger is required. Production timing recommendations are in that runbook.
 
 ## Direct Python Setup
 

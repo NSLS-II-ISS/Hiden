@@ -6,7 +6,7 @@ addopts = "-ra"
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-include = ["hiden/*.py", "tests/*.py"]
+include = ["hiden/*.py", "scripts/*.py", "tests/*.py"]
 exclude = ["hiden/scratch.py"]
 
 [tool.ruff.lint]

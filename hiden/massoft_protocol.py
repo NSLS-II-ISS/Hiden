@@ -275,8 +275,9 @@ def extract_masses(legends):
             start += 1
     masses = []
     for legend in labels[start:]:
+        # Tabular views may append Torr; accept that known suffix, not arbitrary text.
         match = re.fullmatch(
-            r"(?:scan\s+[0-9]+\s*:\s*)?mass\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
+            r"(?:scan\s+[0-9]+\s*:\s*)?mass\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s+Torr)?",
             legend,
             re.IGNORECASE,
         )

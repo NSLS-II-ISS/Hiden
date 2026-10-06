@@ -47,6 +47,11 @@ def test_preserves_deployed_pv_contract():
         "MASsoftMilliseconds",
         "SourceResolution",
         "SourceSample",
+        "TimingArm",
+        "TimingRows",
+        "TimingCorrection",
+        "TimingState",
+        "TimingReport",
     }
     assert actual.keys() - expected.keys() == {f"XF:08IDB-SE{{RGA:1}}:{name}" for name in new_names}
     assert set(CONTRACT["core_pvs"]) <= actual.keys()

@@ -1,5 +1,9 @@
 # MASsoft Tabular Real-Time Acquisition (rc.3 Extension)
 
+For the 2026-10-06 opt-in status observer and conditional approximately-one-second
+production recommendations, see [Status Timing Trial](STATUS_TIMING_TRIAL.md).
+It leaves the publication behavior described here unchanged.
+
 This is an opt-in commissioning mode, not unattended-production approval. It
 removes the per-run CSV/start-time entry **when the selected view supplies a full
 acquisition date/time in every TCP data row**. Default behavior remains manual
@@ -28,9 +32,11 @@ busy retry enabled. No undocumented seek, timestamp or acquisition commands are 
   displayed second, **not** at an invented fractional second based on `43`.
 - Fractional seconds are used only when present in the date/time text itself.
   `SourceResolution` reports that text resolution, not synchronization accuracy.
-- The ms field is preserved unchanged. Its meaning in real-time display mode
-  still needs consecutive-row verification; real-time mode does not depend on
-  it being an experiment-elapsed counter or fraction of a second.
+- The ms field is preserved unchanged. Hiden's clarification and the subsequent
+  raw captures identify it as experiment-relative time before the first mass
+  measurement in the HAL9 row, NOT the fractional part of calendar time.
+  Real-time mode still uses the calendar text directly and does not reconstruct
+  an origin from that counter.
 - Distinct rows with the same absolute timestamp stop publication with an error,
   rather than silently overwrite/merge measurements or manufacture timestamps.
   Validate this before using recipes faster than the table's time resolution.
@@ -53,6 +59,12 @@ new run. Do not step a clock during acquisition. Start a **fresh, uniquely named
 experiment in MASsoft**, with a tabular view (View 2 in this setup) displaying
 **Real Time**. Verify that view's masses, order and units. The IOC does not create
 the view or change MASsoft's table display setting.
+
+Tabular mass legends such as `Scan 1 : mass 2.00 Torr` are supported, alongside
+the unitless legend forms. The IOC preserves their response-column order and
+the original intensity values; it does not convert units or skip unknown labels.
+For an independent socket-level comparison before deployment, see
+[Raw Wire Capture](RAW_WIRE_CAPTURE.md). It does not use the IOC or its parsers.
 
 After this revision is deployed on IOC2, stop the old Hiden IOC process (without
 sending Go/Abort/Close to the instrument) and launch the isolated trial:

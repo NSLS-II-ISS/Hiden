@@ -45,6 +45,37 @@ manual CSV step for this mode. Consecutive-row correspondence, whole-second
 resolution, metadata labels, Windows/IOC2 clock health and a representative
 hardware/Archiver soak remain commissioning gates.
 
+## Status-Start Trial (2026-10-06)
+
+The opt-in diagnostic adds TimingArm, TimingRows, TimingCorrection, TimingState
+and TimingReport (99 total PVs). It observes a stopped baseline, optional
+StartingActive and ScanningActive on a dedicated reader, then captures bounded
+beginning-of-file data from a tabular Real Time view. The first row must contain
+the first mass measured by the recipe. It never changes SourceStartUTC, intensity
+timestamps, SourceMode defaults or production quality thresholds.
+
+Arming requires a fresh OpenExp and Acquire=0. An initial running/disconnected
+status is not accepted as a start. Reconnect is not automatic. Tests cover
+counter resets, calendar/clock inconsistency, changed filenames, disconnect,
+timeout, cancellation, shutdown and unchanged production values/timestamps.
+No start/stop/hardware configuration command is issued by the observer. Reports
+and raw rows are saved to the ignored analysis/status-timing directory on IOC2.
+
+Hiden's operator-supplied email clarifies whole-second calendar truncation,
+pre-first-measurement row counters on HAL9, per-mass views, and variable status
+notification latency. Interval calculations are conditional on a constant
+calendar/counter origin; they do not include clock/model errors and cannot
+certify hardware timing. The 100 ms goal is not proven. Relaxing the requirement
+to approximately one second favors embedded Real Time over status receipt, but
+multi-mass row timing and whole-second collisions remain limitations.
+
+Validation on Windows with the local emulator: **239 passed, 15 skipped**.
+Skipped tests are the Windows PowerShell 5.1 cases blocked by the machine's
+Restricted script policy; that policy was not changed. Ruff checks/format pass.
+Hardware results for this trial are pending. Use the
+[test and production decision runbook](docs/STATUS_TIMING_TRIAL.md); do not promote
+an unvalidated status estimate into production timestamps or claim final sign-off.
+
 ## Production Blockers
 
 **Not approved for unattended production.** Consolidation and successful
@@ -155,11 +186,17 @@ has been added. MID values remain as reported by MASsoft.
 
 ## Validation And Approval
 
-Local real-time extension result: **178 passed, 15 skipped** with Python
-3.13.2/caproto 1.3.0 on Windows. Ruff lint/format, diff whitespace and Pixi lock
-consistency checks passed. The skips remain the Windows PowerShell 5.1 cases
+Local real-time extension result after the Torr legend correction and addition
+of the independent wire-capture diagnostic: **204 passed, 15 skipped** with
+Python 3.13.2/caproto 1.3.0 on Windows.
+Ruff lint/format, Bash syntax, diff whitespace and Pixi lock consistency checks
+passed. The skips remain the Windows PowerShell 5.1 cases
 blocked by Restricted execution policy. Both timing modes were exercised over
 local Channel Access; hardware/Archiver testing on IOC2 is still required.
+Wire-capture tests also preserve split CRLF records, empty/repeated/invalid data,
+non-UTF-8 bytes, extra buffered bytes and timeout evidence without the production
+parsers. No live MASsoft capture was performed by these tests; the operator must
+collect both views before the final mapping comparison.
 
 Prior manual-origin rc.3 result: **139 passed, 15 skipped** with Python 3.13.2/caproto 1.3.0
 on Windows. Lint, format, Bash syntax and Pixi lock checks passed. Tests used
@@ -218,6 +255,20 @@ all legend cells. Regression tests cover both clients and IOCs, the recorded
 format, the four-digit greeting, and MID mapping (including zero/negative values
 and the seventh-channel signal). No magnitude-based filtering or data-cell
 skipping was introduced. Confirm the corrected mapping on the real instrument.
+
+### Tabular Torr Legend Correction
+
+On 2026-10-02, IOC2 connected successfully but OpenExp failed on the observed
+View 2 legend `Scan 1 : mass 2.00 Torr`. The parser now accepts an optional
+whitespace-separated `Torr` suffix, case-insensitively. Bare and scan-prefixed
+mass labels remain supported. No arbitrary suffixes or extra columns are
+discarded; the 1..20 channel limit and wire order are unchanged. Intensity
+values and source timestamps are not transformed by this correction.
+
+Regression tests reproduce the reported rejection, cover quoted time/mass
+headers and malformed suffixes, and exercise real-time OpenExp/Acquire with
+Torr legends through the simulator and local Channel Access. Repeat the
+View 2 association on IOC2; local tests do not establish hardware correctness.
 
 Before production sign-off, the beamline owner must complete:
 

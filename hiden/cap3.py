@@ -9,11 +9,13 @@ import math
 import shlex
 import time
 from functools import wraps
+from pathlib import Path
 
 from caproto import AlarmSeverity, AlarmStatus
 from caproto.server import PVGroup, pvproperty, run, template_arg_parser
 from massoft_client import MASsoftClient, load_runtime_config
 from massoft_protocol import extract_masses
+from massoft_start_probe import StatusTimingProbe
 from massoft_timing import MASsoftClock, SourceGuard, parse_start_utc
 
 LOG = logging.getLogger(__name__)
@@ -534,10 +536,48 @@ class RGAIOC(PVGroup):
     # ---------------------------------------------------------------------
     client_class = MASsoftClient
 
+    timing_arm = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:TimingArm",
+        value=0,
+        dtype=int,
+        doc="1 starts a read-only pre-run timing trial; 0 cancels. Never starts/stops MASsoft.",
+    )
+    timing_rows = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:TimingRows",
+        value=100,
+        dtype=int,
+        doc="Trial row limit 1..1000; 600-second total timeout. Set before TimingArm.",
+    )
+    timing_correction = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:TimingCorrection",
+        value=0.0,
+        dtype=float,
+        doc="Assumed acquisition+notification delay in seconds, 0..60; 0 is uncorrected.",
+    )
+    timing_state = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:TimingState",
+        value="Disabled",
+        dtype=str,
+        max_length=32,
+        read_only=True,
+        doc="Diagnostic only: Connecting/Armed/Starting/Capturing/Complete/Error/Cancelled.",
+    )
+    timing_report = pvproperty(
+        name="XF:08IDB-SE{{RGA:1}}:TimingReport",
+        value="",
+        dtype=str,
+        max_length=16384,
+        max_subscription_backlog=10,
+        read_only=True,
+        doc="JSON start-timing evidence; no accuracy guarantee and no production time changes.",
+    )
+
     def __init__(self, *args, mas_host=None, mas_port=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.client = self.client_class(host=mas_host, port=mas_port)
         self._operation_lock = asyncio.Lock()
+        self._timing_probe = None
+        self._timing_output_dir = Path(__file__).resolve().parents[1] / "analysis" / "status-timing"
         self._publishing = False
         self._links_started = False
         self._mass_vals = []
@@ -566,6 +606,74 @@ class RGAIOC(PVGroup):
         if self.source_mode.value not in (0, 1):
             raise ValueError("default_source_mode must be 0 or 1")
         self._row_clock = MASsoftClock(self.source_timezone.value, self.source_date_order.value)
+
+    def _require_no_timing_probe(self):
+        if self._timing_probe is not None and self._timing_probe.running:
+            raise ValueError("Timing trial running; wait for completion or set TimingArm=0")
+
+    async def _publish_timing_probe(self):
+        if self._timing_probe is None:
+            return
+        report = self._timing_probe.snapshot()
+        encoded = json.dumps(report, allow_nan=False, separators=(",", ":"))
+        if len(encoded) > 16383:
+            raise RuntimeError("Timing report exceeds diagnostic PV capacity")
+        await self.timing_state.write(report["state"])
+        await self.timing_report.write(encoded)
+        if not self._timing_probe.running:
+            await self.timing_arm.write(0, verify_value=False)
+
+    async def _stop_timing_probe(self):
+        if self._timing_probe is not None:
+            await worker(self._timing_probe.stop)
+            await self._publish_timing_probe()
+
+    @timing_arm.putter
+    async def timing_arm(self, instance, value):
+        async with self._operation_lock:
+            if int(value) not in (0, 1):
+                raise ValueError("TimingArm must be 0 or 1")
+            if not int(value):
+                await self._stop_timing_probe()
+                return 0
+            self._require_no_timing_probe()
+            if self._publishing or self._links_started:
+                raise ValueError("Timing trial needs Acquire=0 and a fresh OpenExp (no data links)")
+            if not self.connected.value or not self.client.current_file:
+                raise ValueError("Set ExpName/View and OpenExp before TimingArm")
+            if self.client._resolve_path(str(self.experiment.value)) != self.client.current_file:
+                raise ValueError("ExpName changed; OpenExp before TimingArm")
+            await self._metadata()
+            probe = StatusTimingProbe(
+                self.client.cfg,
+                file=self.client.current_file,
+                view=int(self.view.value),
+                masses=self._mass_vals,
+                clock=self._row_clock,
+                correction_s=float(self.timing_correction.value),
+                rows=int(self.timing_rows.value),
+                output_dir=self._timing_output_dir,
+            )
+            probe.start()
+            self._timing_probe = probe
+            await self._publish_timing_probe()
+            return int(probe.running)
+
+    @timing_rows.putter
+    async def timing_rows(self, instance, value):
+        async with self._operation_lock:
+            self._require_no_timing_probe()
+            if not 1 <= int(value) <= 1000:
+                raise ValueError("TimingRows must be in 1..1000")
+            return int(value)
+
+    @timing_correction.putter
+    async def timing_correction(self, instance, value):
+        async with self._operation_lock:
+            self._require_no_timing_probe()
+            if not math.isfinite(value) or not 0 <= value <= 60:
+                raise ValueError("TimingCorrection must be finite in 0..60 seconds")
+            return float(value)
 
     def _row_metadata_pvs(self):
         return (
@@ -614,6 +722,7 @@ class RGAIOC(PVGroup):
             raise ValueError("Guarded publication requires DataMsFmt=1")
 
     async def _fail(self, exc):
+        await self._stop_timing_probe()
         self._publishing = False
         self._links_started = False
         await self.acquire.write(0, verify_value=False)
@@ -675,6 +784,7 @@ class RGAIOC(PVGroup):
             return 0
         filename = str(self.experiment.value).strip()
         self.client._resolve_path(filename)  # Validate before disturbing the current association.
+        await self._stop_timing_probe()
         self._publishing = False
         self._links_started = False
         await self.acquire.write(0, verify_value=False)
@@ -730,6 +840,7 @@ class RGAIOC(PVGroup):
         if int(value) not in (0, 1):
             raise ValueError("Acquire must be 0 or 1")
         if int(value):
+            self._require_no_timing_probe()
             was_publishing = self._publishing
             self._publishing = True
             try:
@@ -758,6 +869,7 @@ class RGAIOC(PVGroup):
         return int(value)
 
     async def _go(self):
+        self._require_no_timing_probe()
         if self._publishing:
             raise ValueError("Set Acquire=0 before Go; manual mode then needs a new SourceStartUTC")
         await worker(self.client.stop_links)
@@ -788,6 +900,7 @@ class RGAIOC(PVGroup):
         return 0
 
     async def _close(self):
+        await self._stop_timing_probe()
         self._publishing = False
         await self.acquire.write(0, verify_value=False)
         await self._invalidate()
@@ -811,6 +924,7 @@ class RGAIOC(PVGroup):
             if int(value) < 1:
                 raise ValueError("View must be positive")
             if int(value) != int(instance.value):
+                self._require_no_timing_probe()
                 if self._publishing:
                     raise ValueError("Set Acquire=0 before changing View")
                 await worker(self.client.stop_links)
@@ -821,6 +935,7 @@ class RGAIOC(PVGroup):
             return int(value)
 
     async def _publish_once(self):
+        await self._publish_timing_probe()
         sample = self.client.snapshot()
         now = time.monotonic()
         age = now - sample["row_ts"] if sample["row_ts"] else -1.0
@@ -1016,6 +1131,7 @@ class RGAIOC(PVGroup):
     async def connected(self, instance, async_lib):
         async with self._operation_lock:
             self._publishing = False
+            await self._stop_timing_probe()
             await worker(self.client.disconnect)
 
     @run_exp.putter
@@ -1061,6 +1177,7 @@ class RGAIOC(PVGroup):
         return 0
 
     def _require_commissioning(self):
+        self._require_no_timing_probe()
         if _ioc_default("enable_generic_commands", False) is not True:
             raise ValueError("Generic commands disabled; use dedicated controls")
         if self._publishing:

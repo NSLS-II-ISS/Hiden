@@ -31,7 +31,7 @@ class Handler(socketserver.StreamRequestHandler):
                     else:
                         associated, reply = path, "1"
                 elif cmd.startswith("-xFilename"):
-                    reply = associated or "0"
+                    reply = sim.filename_override or associated or "0"
                 elif cmd.startswith("-xStatus"):
                     reply = sim.status
                 elif cmd.startswith("-xAbort"):
@@ -46,9 +46,12 @@ class Handler(socketserver.StreamRequestHandler):
                 elif cmd.startswith("-lLegends"):
                     reply = "\t".join(sim.legends)
                 elif cmd.startswith("-lStatus"):
-                    self.wfile.write((sim.status + "\r\n").encode())
+                    previous = sim.status
+                    self.wfile.write((previous + "\r\n").encode())
                     while not sim.stopping.wait(0.01) and not sim.drop_links.is_set():
-                        pass
+                        if sim.status != previous:
+                            previous = sim.status
+                            self.wfile.write((previous + "\r\n").encode())
                     return
                 elif cmd.startswith("-lData"):
                     data_rows = sim.data_rows
@@ -84,6 +87,7 @@ class Simulator(socketserver.ThreadingTCPServer):
         self.data_rows = None
         self.run_start = time.time() - 1.0
         self.status = "ScanningActive"
+        self.filename_override = None
         self.abort_fails = self.abort_stuck = False
         self.greeting = "101"
         self.greeting_delay = 0

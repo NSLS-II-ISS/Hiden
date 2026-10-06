@@ -19,10 +19,11 @@ from massoft_protocol import MASsoftConfig
 
 
 @pytest.fixture
-def ioc(sim):
+def ioc(sim, tmp_path):
     sim.live_data = True
     group = RGAIOC(prefix="", mas_host="127.0.0.1", mas_port=sim.server_address[1])
     group.sim = sim
+    group._timing_output_dir = tmp_path
     group.client.cfg = MASsoftConfig(
         host="127.0.0.1",
         port=sim.server_address[1],
@@ -31,6 +32,8 @@ def ioc(sim):
         link_chunk_timeout_s=0.03,
     )
     yield group
+    if group._timing_probe:
+        group._timing_probe.stop()
     group.client.disconnect()
 
 
@@ -61,6 +64,113 @@ def test_twenty_channels_schema_and_readonly(ioc):
         assert type(getattr(ioc, f"mid{i}")).__name__.endswith("RO")
         assert type(getattr(ioc, f"mass{i}")).__name__.endswith("RO")
     assert ioc.mid1.alarm is not ioc.mid2.alarm
+
+
+def test_timing_probe_has_no_automatic_instrument_access(ioc, sim):
+    asyncio.run(ioc._publish_once())
+    assert ioc.timing_state.value == "Disabled"
+    assert ioc._timing_probe is None
+    assert sim.commands == []
+
+
+def test_ioc_timing_trial_preserves_production_data_and_manual_start(ioc, sim):
+    async def scenario():
+        sim.status = "StoppedActive"
+        sim.data_rows = queue.Queue()
+        await ioc.view.write(2)
+        await ioc.open_exp.write(1)
+        await ioc.timing_rows.write(2)
+        production_value = ioc.mid1.value
+        production_timestamp = ioc.mid1.timestamp
+        await ioc.timing_arm.write(1)
+        await wait_until(lambda: ioc._timing_probe.snapshot()["state"] == "Armed")
+        await ioc._publish_once()
+        assert ioc.timing_state.value == "Armed"
+        await ioc.acquire.write(1)
+        assert ioc.acquire.value == 0
+        await ioc.go.write(1)
+        assert not any(cmd.startswith("-xGo") for _, cmd in sim.commands)
+        with pytest.raises(ValueError, match="Timing trial running"):
+            await ioc.view.write(1)
+        with pytest.raises(ValueError, match="Timing trial running"):
+            await ioc.timing_correction.write(1)
+        sim.status = "StartingActive"
+        await wait_until(lambda: ioc._timing_probe.snapshot()["state"] == "Starting")
+        sim.status = "ScanningActive"
+        await wait_until(lambda: any(cmd.startswith("-lData") for _, cmd in sim.commands))
+        # Whole-second calendar text, as actually observed on the HAL9.
+        stamp = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y %I:%M:%S %p")
+        sim.data_rows.put(stamp + "\t10\t" + "\t".join(["-1e-9"] * 20))
+        sim.data_rows.put(stamp + "\t20\t" + "\t".join(["-2e-9"] * 20))
+        await wait_until(lambda: not ioc._timing_probe.running)
+        await ioc._publish_once()
+        report = json.loads(ioc.timing_report.value)
+        assert report["state"] == "Complete", report
+        assert report["saved"]
+        assert ioc.timing_arm.value == 0
+        assert ioc.connected.value == 1
+        assert ioc.acquire.value == 0
+        assert ioc.source_start.value == ""
+        assert ioc.mid1.value == production_value
+        assert ioc.mid1.timestamp == production_timestamp
+        assert ioc.published_rows.value == 0
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+def test_timing_failure_is_isolated_from_normal_ioc_connection(ioc, sim):
+    async def scenario():
+        sim.status = "ScanningActive"
+        await ioc.open_exp.write(1)
+        await ioc.timing_arm.write(1)
+        await wait_until(lambda: not ioc._timing_probe.running)
+        await ioc._publish_once()
+        assert ioc.timing_state.value == "Error"
+        assert ioc.connected.value == 1
+        assert ioc.data_state.value != "Error"
+        assert "Initial status" in json.loads(ioc.timing_report.value)["error"]
+        assert not any(cmd.startswith("-lData") for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+def test_open_and_shutdown_stop_timing_probe_without_hardware_commands(ioc, sim):
+    async def scenario():
+        sim.status = "StoppedActive"
+        await ioc.open_exp.write(1)
+        await ioc.timing_arm.write(1)
+        await wait_until(lambda: ioc._timing_probe.snapshot()["state"] == "Armed")
+        previous = ioc._timing_probe
+        await ioc.open_exp.write(1)
+        assert not previous.running
+        assert ioc.timing_state.value == "Cancelled"
+        assert previous.snapshot()["saved"]
+        await ioc.timing_arm.write(1)
+        await wait_until(lambda: ioc._timing_probe.snapshot()["state"] == "Armed")
+        await ioc.connected.server_shutdown(None)
+        assert not ioc._timing_probe.running
+        assert not any(cmd.startswith(("-xGo", "-xAbort", "-xClose")) for _, cmd in sim.commands)
+
+    asyncio.run(scenario())
+
+
+def test_timing_controls_require_association_and_validate_settings(ioc):
+    async def scenario():
+        with pytest.raises(ValueError, match="OpenExp"):
+            await ioc.timing_arm.write(1)
+        with pytest.raises(ValueError, match="0 or 1"):
+            await ioc.timing_arm.write(2)
+        with pytest.raises(ValueError, match="TimingRows"):
+            await ioc.timing_rows.write(0)
+        with pytest.raises(ValueError, match="TimingCorrection"):
+            await ioc.timing_correction.write(float("nan"))
+        await ioc.open_exp.write(1)
+        await ioc.experiment.write("different.exp")
+        with pytest.raises(ValueError, match="ExpName changed"):
+            await ioc.timing_arm.write(1)
+
+    asyncio.run(scenario())
 
 
 def test_open_acquire_close_reopen_and_short_recipe(ioc, sim):
@@ -549,6 +659,8 @@ def test_real_ca_server_startup_readback_and_readonly(monkeypatch, tmp_path, sim
     root = Path(__file__).resolve().parents[1]
     sim.run_start = time.time() - 3600
     sim.data_rows = queue.Queue()
+    if real_time:
+        sim.legends = [f"Scan {i} : {label} Torr" for i, label in enumerate(sim.legends, 1)]
     logfile = tmp_path / "ioc.log"
     with logfile.open("w") as log:
         proc = subprocess.Popen(
@@ -669,9 +781,10 @@ async def open_realtime(ioc):
     assert ioc.acquire.value == 1, ioc.last_error.value
 
 
-def test_realtime_no_csv_replay_then_whole_second_live_with_matched_metadata(ioc, sim):
+@pytest.mark.parametrize("unit", ["", " Torr"])
+def test_realtime_no_csv_replay_then_whole_second_live_with_matched_metadata(ioc, sim, unit):
     sim.data_rows = queue.Queue()
-    sim.legends = ["Real time", "ms", "Scan 9 : mass 40.00", "Scan 1 : mass 2.00"]
+    sim.legends = ["Real time", "ms", f"Scan 9 : mass 40.00{unit}", f"Scan 1 : mass 2.00{unit}"]
 
     async def scenario():
         await open_realtime(ioc)
@@ -687,17 +800,19 @@ def test_realtime_no_csv_replay_then_whole_second_live_with_matched_metadata(ioc
         assert ioc.source_age.value > 3500
         assert ioc.mid1.alarm.severity == AlarmSeverity.INVALID_ALARM
         stamp = math.floor(time.time()) + 1
-        sim.data_rows.put(realtime_row(sim, stamp, 2347, -5.6e-9, whole_seconds=True))
+        row = realtime_row(sim, stamp, 2347, -5.6e-9, whole_seconds=True)
+        sim.data_rows.put(row.rsplit("\t", 1)[0] + "\t0")
         await publish_when_ready(ioc)
         assert ioc.data_state.value == "Live"
         assert ioc.mid1.timestamp == stamp
         assert ioc.mid1.value == -5.6e-9
+        assert ioc.mid2.value == 0
         assert ioc.massoft_milliseconds.value == 2347
         assert ioc.source_resolution.value == 1
         assert ioc.source_start.value == ""
         frame = json.loads(ioc.source_sample.value)
         assert frame["masses"] == [40, 2]
-        assert frame["values"] == [-5.6e-9, -5.6e-9]
+        assert frame["values"] == [-5.6e-9, 0]
         assert frame["source_unix"] == stamp
         assert frame["file"] == ioc.active_file.value
         assert frame["view"] == 2

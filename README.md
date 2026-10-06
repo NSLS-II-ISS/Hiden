@@ -8,16 +8,20 @@ Release candidate: **1.0.0-rc.3**, **not yet approved for unattended production*
 Guarded acquisition withholds historical replay. The opt-in **MASsoft real-time
 mode** reads acquisition date/time from tabular View 2, without a per-run CSV or
 manual origin. Follow the [real-time trial](docs/REALTIME_ACQUISITION.md) first.
+The [status-start timing trial](docs/STATUS_TIMING_TRIAL.md) records a manually
+started run using an independently armed observer, without changing measurement
+timestamps. It saves comparison reports automatically; no CSV is needed.
 The original [manual-origin mode](docs/GUARDED_ACQUISITION.md) remains the default.
 A small `DataAge` means receipt freshness, not measurement freshness. Neither
 mode seeks past history or repairs old archive entries. See `RELEASE_REVIEW.md`.
 
 ## Project Layout And Migration
 
-- `hiden/cap3.py`: 94 PVs (78 existing + 16 timing/quality PVs), 20 MID/mass pairs.
+- `hiden/cap3.py`: 99 PVs (78 existing + 16 timing/quality + 5 trial PVs), 20 MID/mass pairs.
 - `hiden/massoft_client.py`: unified command, status, data and diagnostic client API.
 - `hiden/massoft_protocol.py`: shared configuration, CRLF transport and strict parsing.
 - `hiden/massoft_timing.py`: source-time guard, bounded FIFO and offline CSV-origin helper.
+- `hiden/massoft_start_probe.py`: opt-in, finite status-start timing diagnostic; no controls.
 - `hiden/hiden_config.json`: MASsoft target and IOC defaults.
 - `st.cmd`, `config`, `pixi.toml`, `pixi.lock`: IOC2 launch and managed deployment inputs.
 - `archiver-pvs.txt`: the unchanged 40 mass/intensity PV names.
@@ -443,8 +447,10 @@ Real-time mode: select tabular View + SourceMode=1 -> OpenExp -> Acquire=1
   `ioc.stale_after_s=60`; set it above the longest expected MID cycle plus margin.
   A silent stream produces a stale-data warning, not an automatic abort/reconnect.
 - MID views must contain 1..20 species legends, either `mass <number>` or
-  `Scan <index> : mass <number>`. Optional leading `Elapsed time`/`Real time` and `Time (ms)`/`ms`
-  headers describe time metadata, not extra MID channels. Masses retain their
+  `Scan <index> : mass <number>`, optionally followed by ` Torr` as in tabular
+  views. The suffix is recognized without scaling the returned values. Optional
+  leading `Elapsed time`/`Real time` and `Time (ms)`/`ms` headers describe time
+  metadata, not extra MID channels. Masses retain their
   response-column order, regardless of the scan indices. Missing, malformed,
   nonfinite, or ambiguous cells fail visibly rather than shifting mass assignments.
   Negative and zero readings are retained. Unsupported/custom legend formats

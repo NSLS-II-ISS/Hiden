@@ -71,19 +71,27 @@ def test_single_zero_and_legends():
         ["Real time", "Time (ms)"],
     ],
 )
-def test_scan_legends_ignore_only_leading_time_metadata(time_legends):
+@pytest.mark.parametrize("unit", ["", " Torr"])
+def test_scan_legends_ignore_only_leading_time_metadata(time_legends, unit):
     # Keep wire order, not the numeric Scan ID order.
-    legends = time_legends + ["Scan 7 : mass 40.00", "Scan 2 : mass 2.00"]
+    legends = time_legends + [f"Scan 7 : mass 40.00{unit}", f"Scan 2 : mass 2.00{unit}"]
     assert extract_masses(legends) == [40.0, 2.0]
 
 
-def test_quoted_historical_legends_and_twenty_mass_limit():
-    raw = '"Elapsed time"\t"Time (ms)"\t"Scan 1 : mass 18.00"\t"Scan 2 : mass 28.00"'
+@pytest.mark.parametrize("unit", ["", " Torr"])
+def test_quoted_historical_legends_and_twenty_mass_limit(unit):
+    raw = f'"Elapsed time"\t"Time (ms)"\t"Scan 1 : mass 18.00{unit}"\t"Scan 2 : mass 28.00{unit}"'
     assert extract_masses(parse_legends(raw)) == [18.0, 28.0]
-    full = ["Elapsed time", "Time (ms)"] + [f"Scan {i} : mass {i}.00" for i in range(1, 21)]
+    full = ["Elapsed time", "Time (ms)"] + [f"Scan {i} : mass {i}.00{unit}" for i in range(1, 21)]
     assert extract_masses(full) == list(range(1, 21))
     with pytest.raises(MASsoftProtocolError):
-        extract_masses(full + ["Scan 21 : mass 21.00"])
+        extract_masses(full + [f"Scan 21 : mass 21.00{unit}"])
+
+
+def test_reported_tabular_torr_legends_keep_wire_order():
+    raw = '"Real time"\t"ms"\t"Scan 1 : mass 2.00 Torr"\t"Scan 9 : mass 40.00 Torr"'
+    assert extract_masses(parse_legends(raw)) == [2.0, 40.0]
+    assert extract_masses(["  SCAN 1 : MASS 2.00   tOrR  ", "mass 40 Torr"]) == [2, 40]
 
 
 @pytest.mark.parametrize(
@@ -99,6 +107,12 @@ def test_quoted_historical_legends_and_twenty_mass_limit():
         ["Elapsed time", "Pressure", "mass 2"],
         ["Elapsed time", "Time (ms)", "", "mass 2"],
         ["Scan 1 : unknown 2", "mass 40"],
+        ["Scan 1 : mass 2.00Torr"],
+        ["Scan 1 : mass 2.00 Torr extra"],
+        ["Scan 1 : mass 2.00 Torr Torr"],
+        ["Scan 1 : mass 2.00 Amps"],
+        ["mass 2 Torr", "unknown", "mass 40 Torr"],
+        ["mass 2 Torr", "Real time", "mass 40 Torr"],
     ],
 )
 def test_unknown_or_misplaced_legends_still_fail(legends):
